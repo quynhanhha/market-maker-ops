@@ -10,20 +10,14 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <vector>
 
+#include "framing.h"
 #include "protocol.h"
 
 namespace venue {
 
 namespace {
-
-uint64_t nowWallMs() {
-    using namespace std::chrono;
-    return static_cast<uint64_t>(
-        duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
-}
 
 bool setNonBlocking(int fd) {
     const int flags = ::fcntl(fd, F_GETFL, 0);
@@ -33,8 +27,9 @@ bool setNonBlocking(int fd) {
     return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0;
 }
 
-std::string mdMessage(const Venue::Top& t, uint64_t ts) {
-    return encodeMarketData(t.hasBid, t.bidPx, t.bidQty, t.hasAsk, t.askPx, t.askQty, ts);
+std::string mdPayload(const Venue::Top& t) {
+    return encodeMarketData(kSymbol, t.hasBid, t.bidTicks, t.hasAsk, t.askTicks, t.hasLast,
+                            t.lastTicks, isoTimestampNow());
 }
 
 }  // namespace
@@ -43,7 +38,7 @@ Server::Server(uint16_t port, std::size_t bookCapacity, std::size_t softCap, int
     : port_(port),
       heartbeatMs_(heartbeatMs),
       venue_(bookCapacity, softCap,
-             [this](Venue::ConnId id, std::string msg) { enqueue(id, std::move(msg)); }) {}
+             [this](Venue::ConnId id, std::string payload) { enqueue(id, std::move(payload)); }) {}
 
 bool Server::setupListen() {
     listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -71,36 +66,37 @@ bool Server::setupListen() {
         std::perror("fcntl");
         return false;
     }
-    std::fprintf(stderr, "venue listening on port %u\n", static_cast<unsigned>(port_));
+    std::fprintf(stderr, "venue listening on port %u (symbol %s)\n",
+                 static_cast<unsigned>(port_), kSymbol);
     return true;
 }
 
-void Server::enqueue(Venue::ConnId id, std::string msg) {
+void Server::enqueue(Venue::ConnId id, std::string payload) {
     auto it = connFd_.find(id);
     if (it == connFd_.end()) {
         return;
     }
     auto cit = conns_.find(it->second);
     if (cit != conns_.end()) {
-        cit->second.out += msg;
+        cit->second.out += encodeFrame(payload);
     }
 }
 
-void Server::broadcast(const std::string& msg) {
+void Server::broadcastPayload(const std::string& payload) {
+    const std::string framed = encodeFrame(payload);
     for (auto& [fd, c] : conns_) {
         (void)fd;
-        c.out += msg;
+        c.out += framed;
     }
 }
 
 void Server::broadcastFeed(bool includeHeartbeat) {
-    const uint64_t ts = nowWallMs();
     if (includeHeartbeat) {
         ++heartbeatSeq_;
-        broadcast(encodeHeartbeat(heartbeatSeq_, ts));
+        broadcastPayload(encodeHeartbeat(heartbeatSeq_, isoTimestampNow()));
     }
     lastTop_ = venue_.currentTop();
-    broadcast(mdMessage(lastTop_, ts));
+    broadcastPayload(mdPayload(lastTop_));
 }
 
 void Server::acceptNew() {
@@ -119,12 +115,11 @@ void Server::acceptNew() {
         }
         setNonBlocking(cfd);
         const Venue::ConnId cid = nextConnId_++;
-        conns_.emplace(cfd, Conn{cfd, std::string(), std::string()});
+        conns_.emplace(cfd, Conn{cfd, FrameDecoder{}, std::string()});
         connFd_[cid] = cfd;
         fdConn_[cfd] = cid;
-        // Give the new connection an immediate snapshot so an observer has state
-        // without waiting for the next tick.
-        enqueue(cid, mdMessage(venue_.currentTop(), nowWallMs()));
+        // Immediate snapshot so a new observer has state without waiting for the tick.
+        enqueue(cid, mdPayload(venue_.currentTop()));
     }
 }
 
@@ -133,7 +128,7 @@ void Server::handleReadable(int fd) {
     while (true) {
         const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
         if (n > 0) {
-            conns_[fd].in.append(buf, static_cast<std::size_t>(n));
+            conns_[fd].decoder.feed(buf, static_cast<std::size_t>(n));
             continue;
         }
         if (n == 0) {
@@ -149,17 +144,16 @@ void Server::handleReadable(int fd) {
         closeConn(fd);
         return;
     }
-    processLines(fd);
-}
 
-void Server::processLines(int fd) {
     const Venue::ConnId cid = fdConn_[fd];
-    std::string& in = conns_[fd].in;
-    std::size_t pos;
-    while ((pos = in.find('\n')) != std::string::npos) {
-        std::string line = in.substr(0, pos);
-        in.erase(0, pos + 1);
-        venue_.handleLine(cid, line);
+    std::string payload;
+    while (conns_[fd].decoder.next(payload)) {
+        venue_.handleLine(cid, payload);
+    }
+    if (conns_[fd].decoder.error()) {
+        // Structural framing violation (bad magic / over-length) — fail loud.
+        std::fprintf(stderr, "framing error on fd %d; closing\n", fd);
+        closeConn(fd);
     }
 }
 
@@ -219,7 +213,7 @@ int Server::run() {
             pfds.push_back(p);
         }
 
-        auto now = steady_clock::now();
+        const auto now = steady_clock::now();
         int timeoutMs;
         if (nextBeat > now) {
             const auto ms = duration_cast<milliseconds>(nextBeat - now).count();
@@ -271,7 +265,7 @@ int Server::run() {
         const Venue::Top top = venue_.currentTop();
         if (top != lastTop_) {
             lastTop_ = top;
-            broadcast(mdMessage(top, nowWallMs()));
+            broadcastPayload(mdPayload(top));
         }
     }
 }

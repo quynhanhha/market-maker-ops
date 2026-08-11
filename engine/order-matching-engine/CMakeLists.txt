@@ -56,6 +56,7 @@ target_compile_options(order_matching_engine PRIVATE ${PROJECT_WARNING_FLAGS})
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(venue_core STATIC
     venue/protocol.cpp
+    venue/framing.cpp
     venue/venue.cpp
 )
 target_link_libraries(venue_core PUBLIC order_matching_engine)

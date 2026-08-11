@@ -12,7 +12,7 @@ namespace {
 void usage(const char* prog) {
     std::fprintf(stderr,
                  "usage: %s [--port N] [--capacity N] [--heartbeat-ms N]\n"
-                 "  --port         TCP port to listen on         (default 9001)\n"
+                 "  --port         TCP port (default 9200, or $VENUE_PORT)\n"
                  "  --capacity     max simultaneous live orders  (default 1048576)\n"
                  "  --heartbeat-ms heartbeat/market-data cadence  (default 1000)\n",
                  prog);
@@ -34,9 +34,19 @@ bool parseU64(const char* s, uint64_t& out) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    uint16_t port = 9001;
+    uint16_t port = 9200;  // single source of the default; env/flag override below
     uint64_t capacity = 1u << 20;  // max live (resting) orders admitted
     int heartbeatMs = 1000;
+
+    if (const char* envPort = std::getenv("VENUE_PORT")) {
+        uint64_t v = 0;
+        if (parseU64(envPort, v) && v > 0 && v <= 65535) {
+            port = static_cast<uint16_t>(v);
+        } else {
+            std::fprintf(stderr, "invalid VENUE_PORT=%s\n", envPort);
+            return 2;
+        }
+    }
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];

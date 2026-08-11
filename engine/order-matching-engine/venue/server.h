@@ -5,26 +5,25 @@
 #include <string>
 #include <unordered_map>
 
+#include "framing.h"
 #include "venue.h"
 
 namespace venue {
 
-// Single-threaded poll() TCP server. Owns all sockets and per-connection byte
-// buffers; every engine call happens on this one thread (no locks). Accepts
-// many connections, frames newline-delimited JSON, and broadcasts a periodic
-// HEARTBEAT + MARKET_DATA feed on a timer (plus MARKET_DATA whenever the top of
-// book changes).
+// Single-threaded poll() TCP server. Owns all sockets and per-connection buffers;
+// every engine call happens on this one thread (no locks). Frames inbound bytes
+// with FrameDecoder, frames every outbound payload, and broadcasts a periodic
+// HEARTBEAT + MARKET_DATA feed (plus MARKET_DATA when the top of book moves).
 class Server {
 public:
     Server(uint16_t port, std::size_t bookCapacity, std::size_t softCap, int heartbeatMs);
 
-    // Blocks running the event loop. Returns non-zero only on setup failure.
-    int run();
+    int run();  // blocks; returns non-zero only on setup failure
 
 private:
     struct Conn {
         int fd;
-        std::string in;
+        FrameDecoder decoder;
         std::string out;
     };
 
@@ -32,10 +31,9 @@ private:
     void acceptNew();
     void handleReadable(int fd);
     void handleWritable(int fd);
-    void processLines(int fd);
     void closeConn(int fd);
-    void enqueue(Venue::ConnId id, std::string msg);
-    void broadcast(const std::string& msg);
+    void enqueue(Venue::ConnId id, std::string payload);
+    void broadcastPayload(const std::string& payload);
     void broadcastFeed(bool includeHeartbeat);
 
     uint16_t port_;

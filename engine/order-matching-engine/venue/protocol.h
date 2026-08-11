@@ -3,27 +3,33 @@
 #include <cstdint>
 #include <string>
 
-// Wire protocol for the exchange venue: newline-delimited JSON, one object per
-// line. This module only encodes/decodes messages — it holds no book state.
+// Message layer for the exchange venue. Payloads are JSON objects (framing lives
+// in framing.h). Prices are decimals on the wire and fixed-point integer *ticks*
+// internally (kPriceScale ticks per unit). This module holds no book state.
 namespace venue {
+
+// 1 tick = 0.01 (two decimal places). phase-1-spec.md quotes 2-dp prices; >2 dp
+// on the wire is rejected as bad_price rather than silently rounded.
+inline constexpr uint32_t kPriceScale = 100;
 
 enum class MsgType { NewOrder, Cancel, Heartbeat, Unknown };
 
 enum class OrderSide { Buy, Sell };
 
 // A parsed inbound line. Parsing never throws; malformed input sets parseError.
-// The has* flags distinguish "field absent/invalid" from "field present" so the
-// venue can produce precise REJECT reasons.
+// has* flags distinguish "field absent/invalid" from "present" for precise REJECTs.
 struct InboundMessage {
     MsgType type = MsgType::Unknown;
-    uint64_t orderId = 0;
+    std::string clientOrderId;
+    std::string symbol;
     OrderSide side = OrderSide::Buy;
-    uint32_t price = 0;
-    uint32_t quantity = 0;
-    bool hasOrderId = false;
+    uint32_t priceTicks = 0;
+    uint32_t qty = 0;
+    bool hasClientOrderId = false;
+    bool hasSymbol = false;
     bool hasSide = false;
-    bool hasPrice = false;
-    bool hasQuantity = false;
+    bool hasPrice = false;  // present AND a valid ≤2-dp positive decimal
+    bool hasQty = false;
     bool parseError = false;
     std::string errorDetail;
 };
@@ -31,14 +37,25 @@ struct InboundMessage {
 InboundMessage parseInbound(const std::string& line);
 
 const char* sideToString(OrderSide side);
+std::string ticksToDecimal(uint32_t ticks);   // 10002 -> "100.02"
+std::string isoTimestampNow();                 // "2026-08-11T14:51:00.123Z"
 
-// Each encoder returns a single newline-terminated JSON line.
-std::string encodeAck(uint64_t orderId);
-std::string encodeReject(uint64_t orderId, const std::string& reason);
-std::string encodeFill(uint64_t orderId, OrderSide side, uint32_t price, uint32_t quantity);
-std::string encodeHeartbeat(uint64_t seq, uint64_t tsMillis);
-std::string encodeMarketData(bool hasBid, uint32_t bidPx, uint32_t bidQty,
-                             bool hasAsk, uint32_t askPx, uint32_t askQty,
-                             uint64_t tsMillis);
+// Encoders return a JSON payload (no framing, no trailing newline). Callers pass
+// the ISO8601 `ts` so the encoders stay pure/testable.
+std::string encodeAck(const std::string& clientOrderId, const std::string& exchangeOrderId,
+                      const std::string& ts);
+std::string encodeReject(const std::string& clientOrderId, const std::string& reason,
+                         const std::string& ts);
+std::string encodeCancelAck(const std::string& clientOrderId, const std::string& exchangeOrderId,
+                            const std::string& ts);
+std::string encodeCancelReject(const std::string& clientOrderId, const std::string& reason,
+                               const std::string& ts);
+std::string encodeFill(const std::string& exchangeOrderId, const std::string& clientOrderId,
+                       uint32_t fillQty, uint32_t fillPriceTicks, uint32_t remainingQty,
+                       const std::string& ts);
+std::string encodeHeartbeat(uint64_t seq, const std::string& ts);
+std::string encodeMarketData(const std::string& symbol, bool hasBid, uint32_t bidTicks,
+                             bool hasAsk, uint32_t askTicks, bool hasLast, uint32_t lastTicks,
+                             const std::string& ts);
 
 }  // namespace venue

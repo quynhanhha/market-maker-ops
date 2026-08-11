@@ -1,16 +1,20 @@
 #include "protocol.h"
 
-#include <limits>
+#include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <map>
 
 namespace venue {
+
+static_assert(kPriceScale == 100, "ticksToDecimal formatting assumes 2 decimal places");
 
 namespace {
 
 struct JsonValue {
     bool isString = false;
-    std::string str;
-    uint64_t num = 0;
+    std::string str;      // decoded, for strings
+    std::string numRaw;   // raw token, for numbers
 };
 
 void skipWs(const std::string& s, std::size_t& i) {
@@ -42,35 +46,43 @@ bool parseString(const std::string& s, std::size_t& i, std::string& out) {
                 case 'n': out.push_back('\n'); break;
                 case 't': out.push_back('\t'); break;
                 case 'r': out.push_back('\r'); break;
-                default: return false;  // unsupported escape
+                default: return false;
             }
         } else {
             out.push_back(c);
         }
     }
-    return false;  // unterminated string
+    return false;
 }
 
-bool parseNumber(const std::string& s, std::size_t& i, uint64_t& out) {
+// Captures a JSON number token (optional '-', digits, optional '.digits'); no
+// exponent support (unneeded). Interpretation (integer vs decimal) is deferred.
+bool parseNumber(const std::string& s, std::size_t& i, std::string& raw) {
     const std::size_t start = i;
-    uint64_t val = 0;
-    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-        const uint64_t d = static_cast<uint64_t>(s[i] - '0');
-        if (val > (std::numeric_limits<uint64_t>::max() - d) / 10) {
-            return false;  // overflow
-        }
-        val = val * 10 + d;
+    if (i < s.size() && s[i] == '-') {
         ++i;
     }
-    if (i == start) {
-        return false;  // no digits
+    const std::size_t intStart = i;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+        ++i;
     }
-    out = val;
+    if (i == intStart) {
+        return false;
+    }
+    if (i < s.size() && s[i] == '.') {
+        ++i;
+        const std::size_t fracStart = i;
+        while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+            ++i;
+        }
+        if (i == fracStart) {
+            return false;
+        }
+    }
+    raw = s.substr(start, i - start);
     return true;
 }
 
-// Parses a flat JSON object of string/number values. Rejects nesting, arrays,
-// booleans, and trailing garbage. Returns false on any malformed structure.
 bool parseFlatObject(const std::string& s, std::map<std::string, JsonValue>& out) {
     std::size_t i = 0;
     skipWs(s, i);
@@ -106,7 +118,7 @@ bool parseFlatObject(const std::string& s, std::map<std::string, JsonValue>& out
             }
             v.isString = true;
         } else {
-            if (!parseNumber(s, i, v.num)) {
+            if (!parseNumber(s, i, v.numRaw)) {
                 return false;
             }
             v.isString = false;
@@ -127,7 +139,92 @@ bool parseFlatObject(const std::string& s, std::map<std::string, JsonValue>& out
         return false;
     }
     skipWs(s, i);
-    return i >= s.size();  // trailing garbage after '}' → malformed
+    return i >= s.size();
+}
+
+bool parseUint32(const std::string& raw, uint32_t& out) {
+    if (raw.empty()) {
+        return false;
+    }
+    uint64_t v = 0;
+    for (const char c : raw) {
+        if (c < '0' || c > '9') {
+            return false;  // rejects '-' and '.' too
+        }
+        v = v * 10 + static_cast<uint64_t>(c - '0');
+        if (v > 0xFFFFFFFFull) {
+            return false;
+        }
+    }
+    out = static_cast<uint32_t>(v);
+    return true;
+}
+
+// "100.02" -> 10002 ticks. Rejects negatives and >2 decimal places (→ bad_price).
+bool parseDecimalToTicks(const std::string& raw, uint32_t& out) {
+    if (raw.empty() || raw[0] == '-') {
+        return false;
+    }
+    const std::size_t dot = raw.find('.');
+    std::string intPart = (dot == std::string::npos) ? raw : raw.substr(0, dot);
+    std::string fracPart = (dot == std::string::npos) ? std::string() : raw.substr(dot + 1);
+    if (intPart.empty() || fracPart.size() > 2) {
+        return false;
+    }
+    while (fracPart.size() < 2) {
+        fracPart.push_back('0');
+    }
+    for (const char c : intPart) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    for (const char c : fracPart) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    uint64_t whole = 0;
+    for (const char c : intPart) {
+        whole = whole * 10 + static_cast<uint64_t>(c - '0');
+        if (whole > 0xFFFFFFFFull) {
+            return false;
+        }
+    }
+    const uint64_t frac =
+        static_cast<uint64_t>(fracPart[0] - '0') * 10 + static_cast<uint64_t>(fracPart[1] - '0');
+    const uint64_t ticks = whole * kPriceScale + frac;
+    if (ticks > 0xFFFFFFFFull) {
+        return false;
+    }
+    out = static_cast<uint32_t>(ticks);
+    return true;
+}
+
+std::string quoteJson(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    out.push_back('"');
+    for (const char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char b[8];
+                    std::snprintf(b, sizeof(b), "\\u%04x",
+                                  static_cast<unsigned>(static_cast<unsigned char>(c)));
+                    out += b;
+                } else {
+                    out.push_back(c);
+                }
+        }
+    }
+    out.push_back('"');
+    return out;
 }
 
 }  // namespace
@@ -140,7 +237,6 @@ InboundMessage parseInbound(const std::string& line) {
         m.errorDetail = "json";
         return m;
     }
-
     auto typeIt = obj.find("type");
     if (typeIt == obj.end() || !typeIt->second.isString) {
         m.parseError = true;
@@ -158,9 +254,13 @@ InboundMessage parseInbound(const std::string& line) {
         m.type = MsgType::Unknown;
     }
 
-    if (auto it = obj.find("order_id"); it != obj.end() && !it->second.isString) {
-        m.orderId = it->second.num;
-        m.hasOrderId = true;
+    if (auto it = obj.find("client_order_id"); it != obj.end() && it->second.isString) {
+        m.clientOrderId = it->second.str;
+        m.hasClientOrderId = true;
+    }
+    if (auto it = obj.find("symbol"); it != obj.end() && it->second.isString) {
+        m.symbol = it->second.str;
+        m.hasSymbol = true;
     }
     if (auto it = obj.find("side"); it != obj.end() && it->second.isString) {
         if (it->second.str == "BUY") {
@@ -172,15 +272,17 @@ InboundMessage parseInbound(const std::string& line) {
         }
     }
     if (auto it = obj.find("price"); it != obj.end() && !it->second.isString) {
-        if (it->second.num <= std::numeric_limits<uint32_t>::max()) {
-            m.price = static_cast<uint32_t>(it->second.num);
+        uint32_t ticks = 0;
+        if (parseDecimalToTicks(it->second.numRaw, ticks)) {
+            m.priceTicks = ticks;
             m.hasPrice = true;
         }
     }
-    if (auto it = obj.find("quantity"); it != obj.end() && !it->second.isString) {
-        if (it->second.num <= std::numeric_limits<uint32_t>::max()) {
-            m.quantity = static_cast<uint32_t>(it->second.num);
-            m.hasQuantity = true;
+    if (auto it = obj.find("qty"); it != obj.end() && !it->second.isString) {
+        uint32_t q = 0;
+        if (parseUint32(it->second.numRaw, q)) {
+            m.qty = q;
+            m.hasQty = true;
         }
     }
     return m;
@@ -190,43 +292,81 @@ const char* sideToString(OrderSide side) {
     return side == OrderSide::Buy ? "BUY" : "SELL";
 }
 
-std::string encodeAck(uint64_t orderId) {
-    return "{\"type\":\"ACK\",\"order_id\":" + std::to_string(orderId) +
-           ",\"status\":\"ACCEPTED\"}\n";
+std::string ticksToDecimal(uint32_t ticks) {
+    const uint32_t whole = ticks / kPriceScale;
+    const uint32_t frac = ticks % kPriceScale;
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%u.%02u", whole, frac);
+    return std::string(buf);
 }
 
-std::string encodeReject(uint64_t orderId, const std::string& reason) {
-    return "{\"type\":\"REJECT\",\"order_id\":" + std::to_string(orderId) +
-           ",\"reason\":\"" + reason + "\"}\n";
+std::string isoTimestampNow() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const auto ms = duration_cast<milliseconds>(now.time_since_epoch()).count() % 1000;
+    const std::time_t t = system_clock::to_time_t(now);
+    std::tm tm{};
+    gmtime_r(&t, &tm);
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", tm.tm_year + 1900,
+                  tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                  static_cast<int>(ms));
+    return std::string(buf);
 }
 
-std::string encodeFill(uint64_t orderId, OrderSide side, uint32_t price, uint32_t quantity) {
-    return "{\"type\":\"FILL\",\"order_id\":" + std::to_string(orderId) +
-           ",\"side\":\"" + sideToString(side) +
-           "\",\"price\":" + std::to_string(price) +
-           ",\"quantity\":" + std::to_string(quantity) + "}\n";
+std::string encodeAck(const std::string& clientOrderId, const std::string& exchangeOrderId,
+                      const std::string& ts) {
+    return "{\"type\":\"ACK\",\"client_order_id\":" + quoteJson(clientOrderId) +
+           ",\"exchange_order_id\":" + quoteJson(exchangeOrderId) +
+           ",\"ts\":" + quoteJson(ts) + "}";
 }
 
-std::string encodeHeartbeat(uint64_t seq, uint64_t tsMillis) {
+std::string encodeReject(const std::string& clientOrderId, const std::string& reason,
+                         const std::string& ts) {
+    return "{\"type\":\"REJECT\",\"client_order_id\":" + quoteJson(clientOrderId) +
+           ",\"reason\":" + quoteJson(reason) + ",\"ts\":" + quoteJson(ts) + "}";
+}
+
+std::string encodeCancelAck(const std::string& clientOrderId, const std::string& exchangeOrderId,
+                            const std::string& ts) {
+    return "{\"type\":\"CANCEL_ACK\",\"client_order_id\":" + quoteJson(clientOrderId) +
+           ",\"exchange_order_id\":" + quoteJson(exchangeOrderId) +
+           ",\"ts\":" + quoteJson(ts) + "}";
+}
+
+std::string encodeCancelReject(const std::string& clientOrderId, const std::string& reason,
+                               const std::string& ts) {
+    return "{\"type\":\"CANCEL_REJECT\",\"client_order_id\":" + quoteJson(clientOrderId) +
+           ",\"reason\":" + quoteJson(reason) + ",\"ts\":" + quoteJson(ts) + "}";
+}
+
+std::string encodeFill(const std::string& exchangeOrderId, const std::string& clientOrderId,
+                       uint32_t fillQty, uint32_t fillPriceTicks, uint32_t remainingQty,
+                       const std::string& ts) {
+    return "{\"type\":\"FILL\",\"exchange_order_id\":" + quoteJson(exchangeOrderId) +
+           ",\"client_order_id\":" + quoteJson(clientOrderId) +
+           ",\"fill_qty\":" + std::to_string(fillQty) +
+           ",\"fill_price\":" + ticksToDecimal(fillPriceTicks) +
+           ",\"remaining_qty\":" + std::to_string(remainingQty) +
+           ",\"ts\":" + quoteJson(ts) + "}";
+}
+
+std::string encodeHeartbeat(uint64_t seq, const std::string& ts) {
     return "{\"type\":\"HEARTBEAT\",\"seq\":" + std::to_string(seq) +
-           ",\"ts\":" + std::to_string(tsMillis) + "}\n";
+           ",\"ts\":" + quoteJson(ts) + "}";
 }
 
-std::string encodeMarketData(bool hasBid, uint32_t bidPx, uint32_t bidQty,
-                             bool hasAsk, uint32_t askPx, uint32_t askQty,
-                             uint64_t tsMillis) {
-    std::string s = "{\"type\":\"MARKET_DATA\"";
-    if (hasBid) {
-        s += ",\"bid_px\":" + std::to_string(bidPx) + ",\"bid_qty\":" + std::to_string(bidQty);
-    } else {
-        s += ",\"bid_px\":null,\"bid_qty\":null";
-    }
-    if (hasAsk) {
-        s += ",\"ask_px\":" + std::to_string(askPx) + ",\"ask_qty\":" + std::to_string(askQty);
-    } else {
-        s += ",\"ask_px\":null,\"ask_qty\":null";
-    }
-    s += ",\"ts\":" + std::to_string(tsMillis) + "}\n";
+std::string encodeMarketData(const std::string& symbol, bool hasBid, uint32_t bidTicks,
+                             bool hasAsk, uint32_t askTicks, bool hasLast, uint32_t lastTicks,
+                             const std::string& ts) {
+    std::string s = "{\"type\":\"MARKET_DATA\",\"symbol\":" + quoteJson(symbol);
+    s += ",\"best_bid\":";
+    s += hasBid ? ticksToDecimal(bidTicks) : "null";
+    s += ",\"best_ask\":";
+    s += hasAsk ? ticksToDecimal(askTicks) : "null";
+    s += ",\"last_trade\":";
+    s += hasLast ? ticksToDecimal(lastTicks) : "null";
+    s += ",\"ts\":" + quoteJson(ts) + "}";
     return s;
 }
 
