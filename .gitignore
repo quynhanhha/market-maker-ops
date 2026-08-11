@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets — Slack webhook and any local env live here, never committed
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─────────────────────────────────────────────────────────────────────────────
+# macOS
+# ─────────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C++ build dirs & artifacts (patterns un-anchored → match at any depth,
+# so engine/order-matching-engine/build/ etc. are covered)
+# ─────────────────────────────────────────────────────────────────────────────
+build/
+build-*/
+cmake-build-*/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+Testing/
+_deps/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.dSYM/
+
+# Debug & profiling
+*.pdb
+perf.data
+perf.data.old
+*.gcda
+*.gcno
+*.gcov
+callgrind.out.*
+cachegrind.out.*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python (ops-layer)
+# ─────────────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Editors / IDEs
+# ─────────────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+.cache/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generated benchmark output (scoped — NOT a blanket *.json ignore)
+# ─────────────────────────────────────────────────────────────────────────────
+benchmark_results/
+
+CLAUDE.md
+trading-ops-autopilot-spec.md

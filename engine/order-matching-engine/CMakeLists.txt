@@ -50,10 +50,24 @@ target_include_directories(order_matching_engine PUBLIC ${CMAKE_SOURCE_DIR}/incl
 target_compile_options(order_matching_engine PRIVATE ${PROJECT_WARNING_FLAGS})
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main Executable (disabled until order_book is implemented)
+# Venue protocol layer (new — wraps the matching engine over a socket)
+# venue_core: transport-agnostic (protocol + venue wrapper), unit-testable.
+# venue_server: the standalone exchange-venue process (adds the poll() server).
 # ─────────────────────────────────────────────────────────────────────────────
-# add_executable(order_matching src/main.cpp)
-# target_link_libraries(order_matching PRIVATE order_matching_engine)
+add_library(venue_core STATIC
+    venue/protocol.cpp
+    venue/venue.cpp
+)
+target_link_libraries(venue_core PUBLIC order_matching_engine)
+target_include_directories(venue_core PUBLIC ${CMAKE_SOURCE_DIR}/venue)
+target_compile_options(venue_core PRIVATE ${PROJECT_WARNING_FLAGS})
+
+add_executable(venue_server
+    venue/main.cpp
+    venue/server.cpp
+)
+target_link_libraries(venue_server PRIVATE venue_core)
+target_compile_options(venue_server PRIVATE ${PROJECT_WARNING_FLAGS})
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Testing (Google Test)
@@ -120,6 +134,14 @@ if(BUILD_TESTS)
             GTest::gtest_main
     )
     
+    # Venue protocol + validation tests
+    add_executable(venue_protocol_test tests/venue_protocol_test.cpp)
+    target_link_libraries(venue_protocol_test
+        PRIVATE
+            venue_core
+            GTest::gtest_main
+    )
+
     include(GoogleTest)
     gtest_discover_tests(order_pool_test)
     gtest_discover_tests(price_level_test)
@@ -127,6 +149,7 @@ if(BUILD_TESTS)
     gtest_discover_tests(order_book_smp_test)
     gtest_discover_tests(order_book_cancel_test)
     gtest_discover_tests(allocation_test)
+    gtest_discover_tests(venue_protocol_test)
     
     # TODO: uncomment when implemented
     # add_executable(order_book_test tests/order_book_test.cpp)
