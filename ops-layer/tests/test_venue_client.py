@@ -1,4 +1,4 @@
-"""Tests for venue_client — framing correctness and message dispatch.
+"""Tests for venue_client.
 """
 
 from __future__ import annotations

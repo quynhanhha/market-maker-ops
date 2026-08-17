@@ -3,8 +3,7 @@
 Mirrors the C++ side's own split (framing.h/.cpp for wire bytes,
 protocol.h/.cpp for message schema): client.py owns transport/dispatch,
 this module owns the small pieces of message-building every process
-needs regardless of its own strategy. Strategy logic (fair_value.py,
-quoting.py, state.py) never belongs here.
+needs regardless of its own strategy.
 """
 
 from __future__ import annotations

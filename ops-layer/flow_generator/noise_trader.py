@@ -2,9 +2,6 @@
 
 Fires on a random interval, crosses whatever's currently resting. No fair
 value model, no strategy, exists only to guarantee real fills happen.
-Never imports from market_maker — the two strategies stay decoupled —
-but shares venue_client's protocol-layer helpers (SYMBOL, now_iso,
-client_order_id generation) the same way market_maker/main.py does.
 """
 
 from __future__ import annotations
