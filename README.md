@@ -5,7 +5,7 @@ continuously over an explicit wire protocol — two independent processes,
 socket-connected, with no shared memory or in-process calls between them.
 An independent flow generator provides real counterparty order flow, so
 every fill, inventory change, and quote skew below happened through the
-live venue, not a mock.
+live venue.
 
 The matching core is reused from an existing order book implementation;
 the wire protocol, the venue wrapper, the Python client, the
@@ -35,9 +35,9 @@ graph LR
     SRV -- "ACK / REJECT / FILL /<br/>HEARTBEAT / MARKET_DATA" --> VC
 ```
 
-The market maker and the flow generator are independent processes that never
-talk to each other directly — they only interact through the venue, the same
-way two unrelated participants would on a real exchange.
+The market maker and the flow generator are independent processes that 
+only interact through the venue, the same way two unrelated participants 
+would on a real exchange.
 
 **Current milestone:** the venue and market maker above are fully built and
 independently verified — 89/89 C++ unit tests, 42/42 Python unit tests, and
@@ -83,17 +83,16 @@ two live multi-process acceptance runs (7/7 criteria each) covering a
 - Incoming-message dispatch (`HEARTBEAT`/`MARKET_DATA`/`FILL`/`REJECT`) and
   the requote tick loop run as two independently-scheduled coroutines under
   one asyncio event loop — a `FILL` can update state at any point between
-  ticks, not just when the next tick happens to run.
+  ticks.
 
 ### Flow generator — `ops-layer/flow_generator/noise_trader.py`
 
 A market maker resting a bid and ask against an otherwise empty book never
-gets filled — nothing crosses its own quotes. The flow generator is a
-separate process that fires a marketable order against the market maker's
-current best bid/ask on a random interval. It has no fair-value model and
-no strategy — its only job is to guarantee real fills happen, so inventory
-movement, quote skew, and PnL are all exercised through the live venue
-rather than asserted directly against in-memory state.
+gets filled. The flow generator is a separate process that fires a marketable
+order against the market maker's current best bid/ask on a random interval. 
+It has no fair-value model and no strategy as its only job is to guarantee 
+real fills happen, so inventory movement, quote skew, and PnL are all exercised 
+through the live venue.
 
 ## End-to-end lifecycle
 
@@ -219,8 +218,8 @@ fair value from it would be circular, so it runs an independent process
 **A separate flow generator.** Nothing in the venue creates counterparty
 flow on its own. Without an independent participant crossing the market
 maker's quotes, inventory, PnL, and skew would only ever be exercised by
-synthetically mutating state in a test, not by the live system actually
-doing the thing. The flow generator exists purely to make real fills happen.
+synthetically mutating state in a test. The flow generator exists purely
+to make real fills happen.
 
 **Inventory skew.** `reservation_price = fair_value - k × inventory`
 (k = 0.01). Long inventory (positive) pulls the reservation price — and
@@ -268,6 +267,6 @@ injection (killing the connection, delaying a response, dropping a
 message), health checks and state reconciliation, a deterministic playbook
 executor for recovering automatically, and an escalation policy that hands
 off to a real Slack ping when a fault is outside its authority to resolve
-alone. The phase boundaries named above
-(no reconnection, no risk limits, no inbound liveness timeout) exist so
-there's real failure surface for that layer to work against.
+alone. The phase boundaries named above (no reconnection, no risk limits,
+no inbound liveness timeout) exist so there's real failure surface for that 
+layer to work against.
