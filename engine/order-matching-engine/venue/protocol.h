@@ -8,7 +8,7 @@
 // internally (kPriceScale ticks per unit). This module holds no book state.
 namespace venue {
 
-// 1 tick = 0.01 (two decimal places). phase-1-spec.md quotes 2-dp prices; >2 dp
+// 1 tick = 0.01 (two decimal places). >2 dp
 // on the wire is rejected as bad_price rather than silently rounded.
 inline constexpr uint32_t kPriceScale = 100;
 
