@@ -1,7 +1,4 @@
 """Reservation price and bid/ask quote calculation.
-
-Pure functions: no network, no asyncio. Locked v1 constants — see
-phase2-market-maker-spec.md's "Decisions locked for v1".
 """
 
 from __future__ import annotations

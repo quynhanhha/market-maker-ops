@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Spins up the venue process, runs every criterion from phase-1-spec.md's
-"Acceptance criteria" against it, tears it down, and exits non-zero on any
-failure. Run from the repo root:
+Run from the repo root:
 
     python3 ops-layer/tools/acceptance_test.py [--port 9200]
 """

@@ -7,9 +7,7 @@
 
 // Wire framing for the venue protocol:
 //   [4-byte magic 0x56454E31 "VEN1"][4-byte big-endian uint32 payload length][JSON payload]
-// The magic gives a *structural* signal that a frame is corrupt, distinct from an
-// application-level REJECT — Phase 3 needs to tell "venue rejected my order" apart
-// from "the channel is eating bytes." No CRC in v1.
+
 namespace venue {
 
 inline constexpr uint32_t kFrameMagic = 0x56454E31u;  // "VEN1"

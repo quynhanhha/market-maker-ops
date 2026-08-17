@@ -1,8 +1,7 @@
 """Minimal frame-aware venue client
 
 Wire framing: [4-byte magic 0x56454E31 "VEN1"][4-byte big-endian uint32 payload
-length][JSON payload]. This is NOT the real market maker; it's the integration
-test client the acceptance harness builds on.
+length][JSON payload].
 """
 
 import json

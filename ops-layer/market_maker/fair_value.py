@@ -1,9 +1,9 @@
 """Private fair-value process for the market maker.
 
-Gaussian random walk, independent of the venue's MARKET_DATA — the book
+Gaussian random walk, independent of the venue's MARKET_DATA, the book
 only ever reflects the market maker's own quotes plus the flow
 generator's crossings, so deriving fair value from it would be circular.
-FILL and MARKET_DATA update bookkeeping (state.py), never this.
+FILL and MARKET_DATA update bookkeeping (state.py).
 """
 
 from __future__ import annotations

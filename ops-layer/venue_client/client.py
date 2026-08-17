@@ -4,10 +4,6 @@ Wire framing: [4-byte magic 0x56454E31 "VEN1"][4-byte big-endian uint32
 payload length][JSON payload]. Matches engine/order-matching-engine/venue/
 framing.h exactly.
 
-This is the reusable connect/frame/parse/dispatch module — Phase 2's
-market maker and flow generator, and later Phase 3's ops controller, all
-build on this. No strategy logic here, no message accumulation: handlers
-process each dispatched message and it's discarded.
 """
 
 from __future__ import annotations

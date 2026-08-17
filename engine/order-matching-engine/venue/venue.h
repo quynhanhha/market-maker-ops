@@ -15,8 +15,8 @@
 // routing, a capacity guard, decimal↔tick conversion, and a live-order table
 // (also the reconciliation substrate for later phases).
 //
-// It touches the matching engine ONLY through its public API — zero diff to the
-// hot path. Order responses go out via the SendFn seam as JSON payloads (framing
+// It touches the matching engine ONLY through its public API.
+// Order responses go out via the SendFn seam as JSON payloads (framing
 // and the HEARTBEAT/MARKET_DATA feed are the server's job).
 namespace venue {
 

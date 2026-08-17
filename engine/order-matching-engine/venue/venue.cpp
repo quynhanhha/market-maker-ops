@@ -33,7 +33,7 @@ void Venue::handleLine(ConnId conn, const std::string& payload) {
             handleCancel(conn, m);
             break;
         case MsgType::Heartbeat:
-            break;  // client liveness ping — accepted, nothing to do
+            break;  
         case MsgType::Unknown:
             send_(conn, encodeReject(m.hasClientOrderId ? m.clientOrderId : "", "unsupported",
                                      isoTimestampNow()));
@@ -74,7 +74,7 @@ void Venue::handleNewOrder(ConnId conn, const InboundMessage& m) {
         return;
     }
     // Reject-on-self-cross (self-trade prevention). Stricter than the engine's
-    // cancel-remainder SMP, but it keeps our tables exact and means the engine's
+    // cancel-remainder SMP, but it keeps tables exact and means the engine's
     // SMP branch is never exercised.
     if (wouldSelfCross(conn, m.side, m.priceTicks)) {
         send_(conn, encodeReject(cid, "self_match", ts));

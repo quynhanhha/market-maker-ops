@@ -1,8 +1,4 @@
 """Tests for venue_client — framing correctness and message dispatch.
-
-No pytest-asyncio dependency (none exists in this repo yet): async test
-bodies are plain coroutines driven by asyncio.run() inside ordinary
-`def test_x():` functions.
 """
 
 from __future__ import annotations
