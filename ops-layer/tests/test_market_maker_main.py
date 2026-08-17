@@ -17,7 +17,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from market_maker.fair_value import RandomWalkFairValue  # noqa: E402
-from market_maker.main import connect_and_quote_once, make_id_generator  # noqa: E402
+from market_maker.main import connect_and_quote_once, make_id_generator, run  # noqa: E402
+from market_maker.state import PositionState  # noqa: E402
 from venue_client import MAGIC, VenueClient  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
@@ -91,6 +92,48 @@ def test_no_order_sent_before_live_signal():
     _run(body())
 
 
+# ── Requote-loop ordering test against a fake server ─────────
+
+
+def test_tick_cancels_previous_pair_before_resubmitting():
+    async def body():
+        received: list[tuple[str, str | None]] = []
+
+        async def handler(reader, writer):
+            writer.write(_raw_frame({"type": "MARKET_DATA", "symbol": "SIM1",
+                                      "best_bid": None, "best_ask": None, "last_trade": None}))
+            await writer.drain()
+            try:
+                while True:
+                    header = await reader.readexactly(8)
+                    _, length = struct.unpack(">II", header)
+                    payload = await reader.readexactly(length)
+                    msg = json.loads(payload)
+                    received.append((msg["type"], msg.get("client_order_id")))
+            except (asyncio.IncompleteReadError, ConnectionError):
+                pass
+
+        server = await asyncio.start_server(handler, "127.0.0.1", 0)
+        host, port = server.sockets[0].getsockname()[:2]
+
+        fv = RandomWalkFairValue(start=100.00, sigma=0.0, rng=random.Random(0))
+        await run(host, port, run_id="fake", fair_value_source=fv,
+                   tick_interval=0.05, max_ticks=3)
+
+        server.close()
+        await server.wait_closed()
+
+        assert received == [
+            ("NEW_ORDER", "mm-fake-1"), ("NEW_ORDER", "mm-fake-2"),
+            ("CANCEL", "mm-fake-1"), ("CANCEL", "mm-fake-2"),
+            ("NEW_ORDER", "mm-fake-3"), ("NEW_ORDER", "mm-fake-4"),
+            ("CANCEL", "mm-fake-3"), ("CANCEL", "mm-fake-4"),
+            ("NEW_ORDER", "mm-fake-5"), ("NEW_ORDER", "mm-fake-6"),
+        ]
+
+    _run(body())
+
+
 # ── Real-venue integration test ──────────────────────────────────────────
 
 
@@ -141,6 +184,58 @@ def test_real_venue_quote_lands_on_book():
 
             await client.close()
             await observer.close()
+
+        _run(body())
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+@pytest.mark.skipif(not VENUE_BIN.exists(), reason="venue_server not built")
+def test_no_orphaned_resting_orders_and_fill_updates_state():
+    port = 9296
+    proc = _start_venue(port)
+    try:
+        async def body():
+            # sigma=0 pins fair value (and, at zero inventory, the quoted
+            # price) across ticks, so stale un-cancelled orders would be
+            # indistinguishable from the current pair unless cancellation
+            # is actually working.
+            fv = RandomWalkFairValue(start=100.00, sigma=0.0, rng=random.Random(0))
+            state = PositionState()
+            task = asyncio.create_task(
+                run(port=port, run_id="orphan", fair_value_source=fv,
+                    state=state, tick_interval=0.2))
+
+            await asyncio.sleep(0.9)  # let several ticks elapse while connected
+
+            observer = await VenueClient.connect(port=port)
+            fills = []
+            observer.on("FILL", lambda m: fills.append(m))
+            observer.start()
+            # aggressor sized to exceed a single tick's QUOTE_SIZE (10):
+            # if stale orders had piled up instead of being cancelled,
+            # this would fully fill instead of leaving a remainder.
+            await observer.send({"type": "NEW_ORDER", "client_order_id": "aggr",
+                                  "symbol": "SIM1", "side": "SELL", "price": 99.98, "qty": 15})
+            await asyncio.sleep(0.3)
+
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            await observer.close()
+
+            assert len(fills) == 1, fills
+            assert fills[0]["fill_qty"] == 10
+            assert fills[0]["remaining_qty"] == 5
+
+            assert state.inventory == 10
+            assert state.cash == pytest.approx(-999.80)
 
         _run(body())
     finally:
