@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 import struct
 import subprocess
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from venue_client import MAGIC, FramingError, VenueClient, encode_frame  # noqa: E402
+from venue_client import MAGIC, FramingError, VenueClient, encode_frame, make_client_order_id  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 VENUE_BIN = REPO / "engine/order-matching-engine/build/venue_server"
@@ -44,6 +45,21 @@ def test_encode_frame_roundtrip():
     payload = frame[8:8 + length]
     assert len(frame) == 8 + length
     assert json.loads(payload) == obj
+
+
+def test_make_client_order_id_increments_and_is_independent_per_generator():
+    gen_a = make_client_order_id("mm", run_id="A")
+    gen_b = make_client_order_id("nt", run_id="A")
+    assert gen_a() == "mm-A-1"
+    assert gen_a() == "mm-A-2"
+    assert gen_b() == "nt-A-1"  # different prefix, same run_id: independent counter
+    assert gen_a() == "mm-A-3"
+
+
+def test_make_client_order_id_defaults_run_id_to_pid():
+    gen = make_client_order_id("mm")
+    oid = gen()
+    assert oid == f"mm-{os.getpid()}-1"
 
 
 # ── Fake-server dispatch tests ───────────────────────────────────────────

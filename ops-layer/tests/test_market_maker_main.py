@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from market_maker.fair_value import RandomWalkFairValue  # noqa: E402
-from market_maker.main import connect_and_quote_once, make_id_generator, run  # noqa: E402
+from market_maker.main import connect_and_quote_once, run  # noqa: E402
 from market_maker.state import PositionState  # noqa: E402
 from venue_client import MAGIC, VenueClient  # noqa: E402
 
@@ -32,18 +32,6 @@ def _run(coro):
 def _raw_frame(obj: dict) -> bytes:
     payload = json.dumps(obj).encode()
     return struct.pack(">II", MAGIC, len(payload)) + payload
-
-
-# ── Pure unit test ────────────────────────────────────────────────────────
-
-
-def test_id_generator_increments_and_is_independent():
-    gen_a = make_id_generator("A")
-    gen_b = make_id_generator("B")
-    assert gen_a() == "mm-A-1"
-    assert gen_a() == "mm-A-2"
-    assert gen_b() == "mm-B-1"
-    assert gen_a() == "mm-A-3"
 
 
 # ── Ordering test against a fake server ──────────────────────────────────

@@ -5,44 +5,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import itertools
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from market_maker.fair_value import RandomWalkFairValue  # noqa: E402
 from market_maker.quoting import QUOTE_SIZE, Quote, compute_quote  # noqa: E402
 from market_maker.state import PositionState  # noqa: E402
-from venue_client import VenueClient  # noqa: E402
-
-SYMBOL = "SIM1"
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+from venue_client import SYMBOL, VenueClient, make_client_order_id, now_iso  # noqa: E402
 
 
 def _new_order(client_order_id: str, side: str, price: float, qty: int) -> dict:
     return {"type": "NEW_ORDER", "client_order_id": client_order_id, "symbol": SYMBOL,
-            "side": side, "price": price, "qty": qty, "ts": _now_iso()}
+            "side": side, "price": price, "qty": qty, "ts": now_iso()}
 
 
 def _cancel(client_order_id: str) -> dict:
-    return {"type": "CANCEL", "client_order_id": client_order_id, "ts": _now_iso()}
-
-
-def make_id_generator(run_id: str):
-    """mm-{run_id}-{seq}, seq monotonic from 1 — the client_order_id
-    scheme locked in phase2-market-maker-spec.md. Reused as-is by commit
-    5's tick loop, same generator called more times."""
-    seq = itertools.count(1)
-
-    def next_id() -> str:
-        return f"mm-{run_id}-{next(seq)}"
-
-    return next_id
+    return {"type": "CANCEL", "client_order_id": client_order_id, "ts": now_iso()}
 
 
 async def connect_and_quote_once(
@@ -60,8 +40,7 @@ async def connect_and_quote_once(
     Returns the open client (caller closes it), the computed Quote, and
     the responses collected so far keyed by client_order_id.
     """
-    run_id = run_id or str(os.getpid())
-    next_id = make_id_generator(run_id)
+    next_id = make_client_order_id("mm", run_id)
 
     client = await VenueClient.connect(host, port)
     live = asyncio.Event()
@@ -126,8 +105,7 @@ async def run(
     max_ticks stops the loop after N ticks, None (the default, used by
     main()) runs forever.
     """
-    run_id = run_id or str(os.getpid())
-    next_id = make_id_generator(run_id)
+    next_id = make_client_order_id("mm", run_id)
     fv = fair_value_source or RandomWalkFairValue()
     state = state if state is not None else PositionState()
 
