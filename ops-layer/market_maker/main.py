@@ -1,5 +1,3 @@
-"""Market maker entry point.
-"""
 
 from __future__ import annotations
 
@@ -34,12 +32,7 @@ async def connect_and_quote_once(
     live_timeout: float = 5.0,
     response_timeout: float = 2.0,
 ) -> tuple[VenueClient, Quote, dict[str, dict]]:
-    """Connect, wait for the first HEARTBEAT/MARKET_DATA, compute one
-    quote at zero inventory, submit bid+ask, collect ACK/REJECT for each.
-
-    Returns the open client (caller closes it), the computed Quote, and
-    the responses collected so far keyed by client_order_id.
-    """
+    """Return the open client, quote and ACK/REJECT responses; caller closes the client."""
     next_id = make_client_order_id("mm", run_id)
 
     client = await VenueClient.connect(host, port)
@@ -97,14 +90,7 @@ async def run(
     live_timeout: float = 5.0,
     max_ticks: int | None = None,
 ) -> None:
-    """Connect, wait for the first HEARTBEAT/MARKET_DATA, then requote
-    every tick_interval seconds: step fair value, recompute bid/ask from
-    current inventory, cancel the previous resting pair unconditionally,
-    submit the new one. Incoming FILLs update PositionState live.
-
-    max_ticks stops the loop after N ticks, None (the default, used by
-    main()) runs forever.
-    """
+    """Requote until max_ticks is reached, or indefinitely when it is None."""
     next_id = make_client_order_id("mm", run_id)
     fv = fair_value_source or RandomWalkFairValue()
     state = state if state is not None else PositionState()
@@ -146,9 +132,7 @@ async def run(
             for oid in resting:
                 await client.send(_cancel(oid))
 
-            # Bound order_side growth: keep only ids that might still get a
-            # delayed FILL/CANCEL_REJECT (the pair just cancelled) plus the
-            # pair about to be submitted.
+            # Keep one previous pair for delayed fills while bounding memory.
             order_side = {oid: order_side[oid] for oid in resting if oid in order_side}
 
             bid_id, ask_id = next_id(), next_id()

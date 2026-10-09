@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Run from the repo root:
-
-    python3 ops-layer/tools/acceptance_test.py [--port 9200]
-"""
+"""Check order, fill, heartbeat and disconnect behavior against a live venue."""
 
 import argparse
 import socket
@@ -49,10 +45,6 @@ def start_venue(port: int) -> subprocess.Popen:
         except OSError:
             time.sleep(0.05)
     raise RuntimeError("venue did not start listening")
-
-
-# ── Criteria ────────────────────────────────────────────────────────────────
-# Each returns (ok: bool, detail: str).
 
 def c1_starts_and_listens(port, proc):
     ok = proc.poll() is None

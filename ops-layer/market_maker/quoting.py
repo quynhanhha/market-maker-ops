@@ -1,5 +1,3 @@
-"""Reservation price and bid/ask quote calculation.
-"""
 
 from __future__ import annotations
 
@@ -21,12 +19,6 @@ def reservation_price(fair_value: float, inventory: float, k: float = SKEW_K) ->
 
 def compute_quote(fair_value: float, inventory: float,
                    spread: float = SPREAD, k: float = SKEW_K) -> Quote:
-    """Bid/ask around the inventory-skewed reservation price.
-
-    Rounded to 2 decimal places here, at the wire-facing boundary — the
-    venue's price parser rejects anything with more precision as
-    bad_price, and fair_value/reservation_price stay unrounded upstream
-    since PnL math doesn't need cent-alignment.
-    """
+    """Round quotes to two decimals to satisfy venue validation."""
     rp = reservation_price(fair_value, inventory, k)
     return Quote(bid=round(rp - spread / 2, 2), ask=round(rp + spread / 2, 2))

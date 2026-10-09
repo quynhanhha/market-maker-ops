@@ -3,21 +3,16 @@
 #include <cstdint>
 #include <string>
 
-// Message layer for the exchange venue. Payloads are JSON objects (framing lives
-// in framing.h). Prices are decimals on the wire and fixed-point integer *ticks*
-// internally (kPriceScale ticks per unit). This module holds no book state.
 namespace venue {
 
-// 1 tick = 0.01 (two decimal places). >2 dp
-// on the wire is rejected as bad_price rather than silently rounded.
+// Prices use integer cents internally; wire prices with >2 decimals are rejected.
 inline constexpr uint32_t kPriceScale = 100;
 
 enum class MsgType { NewOrder, Cancel, Heartbeat, Unknown };
 
 enum class OrderSide { Buy, Sell };
 
-// A parsed inbound line. Parsing never throws; malformed input sets parseError.
-// has* flags distinguish "field absent/invalid" from "present" for precise REJECTs.
+// has* distinguishes valid fields from absent/invalid ones; malformed input sets parseError.
 struct InboundMessage {
     MsgType type = MsgType::Unknown;
     std::string clientOrderId;
@@ -28,7 +23,7 @@ struct InboundMessage {
     bool hasClientOrderId = false;
     bool hasSymbol = false;
     bool hasSide = false;
-    bool hasPrice = false;  // present AND a valid ≤2-dp positive decimal
+    bool hasPrice = false;
     bool hasQty = false;
     bool parseError = false;
     std::string errorDetail;
@@ -37,11 +32,10 @@ struct InboundMessage {
 InboundMessage parseInbound(const std::string& line);
 
 const char* sideToString(OrderSide side);
-std::string ticksToDecimal(uint32_t ticks);   // 10002 -> "100.02"
-std::string isoTimestampNow();                 // "2026-08-11T14:51:00.123Z"
+std::string ticksToDecimal(uint32_t ticks);
+std::string isoTimestampNow();
 
-// Encoders return a JSON payload (no framing, no trailing newline). Callers pass
-// the ISO8601 `ts` so the encoders stay pure/testable.
+// Encoders return unframed JSON; callers supply ISO8601 timestamps.
 std::string encodeAck(const std::string& clientOrderId, const std::string& exchangeOrderId,
                       const std::string& ts);
 std::string encodeReject(const std::string& clientOrderId, const std::string& reason,

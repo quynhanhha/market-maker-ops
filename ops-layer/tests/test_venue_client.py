@@ -1,5 +1,3 @@
-"""Tests for venue_client.
-"""
 
 from __future__ import annotations
 
@@ -27,13 +25,9 @@ def _run(coro):
 
 
 def _raw_frame(obj: dict) -> bytes:
-    """Hand-built frame, independent of venue_client.encode_frame, so
-    decode tests aren't just checking the module against itself."""
+    """Build frames independently of the production encoder."""
     payload = json.dumps(obj).encode()
     return struct.pack(">II", MAGIC, len(payload)) + payload
-
-
-# ── Framing unit tests ───────────────────────────────────────────────────
 
 
 def test_encode_frame_roundtrip():
@@ -62,13 +56,8 @@ def test_make_client_order_id_defaults_run_id_to_pid():
     assert oid == f"mm-{os.getpid()}-1"
 
 
-# ── Fake-server dispatch tests ───────────────────────────────────────────
-
-
 async def _serve_once(frames_to_send, on_connect=None, expect_recv=0):
-    """Start a throwaway asyncio server that sends `frames_to_send` (raw
-    bytes) to the first connection, optionally reading `expect_recv`
-    frames first. Returns (host, port, close_fn)."""
+    """Return host, port, async cleanup and captured inbound messages."""
     received = []
 
     async def handler(reader, writer):
@@ -183,9 +172,6 @@ def test_wait_for_without_explicit_start():
         assert msg is not None and msg["seq"] == 1
 
     _run(body())
-
-
-# ── Real-venue integration test ──────────────────────────────────────────
 
 
 def _start_venue(port: int) -> subprocess.Popen:

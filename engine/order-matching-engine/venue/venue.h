@@ -9,15 +9,7 @@
 #include "order_book.h"
 #include "protocol.h"
 
-// The Venue wraps the matching engine and owns all protocol-level state the
-// engine deliberately does not provide: participant identity, string client/
-// exchange order ids, ACK/REJECT/CANCEL_ACK/CANCEL_REJECT, validation, FILL
-// routing, a capacity guard, decimal↔tick conversion, and a live-order table
-// (also the reconciliation substrate for later phases).
-//
-// It touches the matching engine ONLY through its public API.
-// Order responses go out via the SendFn seam as JSON payloads (framing
-// and the HEARTBEAT/MARKET_DATA feed are the server's job).
+// Owns protocol state around the matching core; SendFn emits unframed JSON.
 namespace venue {
 
 inline constexpr const char* kSymbol = "SIM1";  // single hardcoded symbol for v1
@@ -29,7 +21,7 @@ public:
 
     Venue(std::size_t bookCapacity, std::size_t softCap, SendFn send);
 
-    void handleLine(ConnId conn, const std::string& payload);  // one JSON payload
+    void handleLine(ConnId conn, const std::string& payload);
     void dropConnection(ConnId conn);
 
     struct Top {

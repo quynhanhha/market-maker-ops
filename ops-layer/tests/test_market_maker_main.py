@@ -1,4 +1,3 @@
-"""Tests for market_maker.main"""
 
 from __future__ import annotations
 
@@ -32,9 +31,6 @@ def _run(coro):
 def _raw_frame(obj: dict) -> bytes:
     payload = json.dumps(obj).encode()
     return struct.pack(">II", MAGIC, len(payload)) + payload
-
-
-# ── Ordering test against a fake server ──────────────────────────────────
 
 
 def test_no_order_sent_before_live_signal():
@@ -80,9 +76,6 @@ def test_no_order_sent_before_live_signal():
     _run(body())
 
 
-# ── Requote-loop ordering test against a fake server ─────────
-
-
 def test_tick_cancels_previous_pair_before_resubmitting():
     async def body():
         received: list[tuple[str, str | None]] = []
@@ -120,9 +113,6 @@ def test_tick_cancels_previous_pair_before_resubmitting():
         ]
 
     _run(body())
-
-
-# ── Real-venue integration test ──────────────────────────────────────────
 
 
 def _start_venue(port: int) -> subprocess.Popen:
@@ -188,10 +178,7 @@ def test_no_orphaned_resting_orders_and_fill_updates_state():
     proc = _start_venue(port)
     try:
         async def body():
-            # sigma=0 pins fair value (and, at zero inventory, the quoted
-            # price) across ticks, so stale un-cancelled orders would be
-            # indistinguishable from the current pair unless cancellation
-            # is actually working.
+            # Fixed prices expose stale orders through excess executable quantity.
             fv = RandomWalkFairValue(start=100.00, sigma=0.0, rng=random.Random(0))
             state = PositionState()
             task = asyncio.create_task(
@@ -204,9 +191,7 @@ def test_no_orphaned_resting_orders_and_fill_updates_state():
             fills = []
             observer.on("FILL", lambda m: fills.append(m))
             observer.start()
-            # aggressor sized to exceed a single tick's QUOTE_SIZE (10):
-            # if stale orders had piled up instead of being cancelled,
-            # this would fully fill instead of leaving a remainder.
+            # Exceed one quote to distinguish cancelled orders from accumulated liquidity.
             await observer.send({"type": "NEW_ORDER", "client_order_id": "aggr",
                                   "symbol": "SIM1", "side": "SELL", "price": 99.98, "qty": 15})
             await asyncio.sleep(0.3)

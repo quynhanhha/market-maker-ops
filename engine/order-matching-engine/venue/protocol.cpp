@@ -55,8 +55,7 @@ bool parseString(const std::string& s, std::size_t& i, std::string& out) {
     return false;
 }
 
-// Captures a JSON number token (optional '-', digits, optional '.digits'); no
-// exponent support (unneeded). Interpretation (integer vs decimal) is deferred.
+// Capture the raw number for integer/decimal validation; exponents are unsupported.
 bool parseNumber(const std::string& s, std::size_t& i, std::string& raw) {
     const std::size_t start = i;
     if (i < s.size() && s[i] == '-') {

@@ -127,12 +127,13 @@ cd ../..
 ```
 
 Then, from the repo root, run the one-command Phase 2 demo — it starts the
-venue, the market maker, and the flow generator as real subprocesses, lets
+venue as a subprocess and runs the market maker and flow generator as two
+tasks in the Python harness process, lets
 them run for ~30 seconds, checks the full acceptance checklist against what
 actually happened, and tears everything down:
 
 ```
-python3 ops-layer/tools/phase2_acceptance_test.py
+python3 ops-layer/tools/trading_acceptance_test.py
 ```
 
 A `7/7 criteria passed` line at the end means the whole path — venue up,
@@ -170,7 +171,7 @@ Flow generator crossing the resting quotes from the same run:
 [noise_trader] nt-40357-3 BUY 3@100.01
 ```
 
-Phase 2 acceptance harness, tail of a run:
+Trading acceptance harness, tail of a run:
 
 ```
 [PASS] 4. reservation price skewed the right direction
@@ -181,6 +182,27 @@ Phase 2 acceptance harness, tail of a run:
 ```
 
 ## Verification
+
+For a reproducible test and acceptance verification record, run from the repository root:
+
+```sh
+python3 ops-layer/tools/capture_verification_evidence.py --duration 300
+```
+
+This uses installed CMake/CTest/pytest and existing fetched dependencies,
+rebuilds with assertions enabled (unspecified build type, benchmarks off),
+and runs both test suites followed by the existing acceptance workload.
+It preserves full logs, test XML with separate pass/fail/skip/error counts,
+command exit codes, monotonic elapsed times, environment/build metadata,
+Git HEAD plus uncommitted source snapshots, and artifact hashes under the
+ignored `evidence/<timestamp>-verification/` directory. Each invocation creates a
+new directory. No dependencies are installed and no commits are created.
+Random seeds remain unspecified, so reproduction repeats the procedure,
+not the exact event sequence. The acceptance run uses two OS processes;
+the separate manual commands above use three. Workload timing covers the
+configured wait and excludes cancellation, observer checks and teardown.
+These results establish the existing acceptance predicates, not full state
+reconciliation, throughput, latency or receiver-error monitoring.
 
 **Fast tests** — 89/89 C++ unit tests and 42/42 Python unit tests, both
 under 10 seconds, for iterating on the code:
@@ -194,12 +216,12 @@ cd ops-layer && pytest
 mocks, and check what actually happened:
 
 ```
-python3 ops-layer/tools/acceptance_test.py                        # venue only — 7/7 passing
-python3 ops-layer/tools/phase2_acceptance_test.py                 # venue + market maker + flow generator, ~30s — 7/7 passing
-python3 ops-layer/tools/phase2_acceptance_test.py --duration 300  # same, over a 5-minute soak — 7/7 passing
+python3 ops-layer/tools/venue_acceptance_test.py                        # venue only — 7/7 passing
+python3 ops-layer/tools/trading_acceptance_test.py                 # venue + market maker + flow generator, ~30s — 7/7 passing
+python3 ops-layer/tools/trading_acceptance_test.py --duration 300  # same, over a 5-minute soak — 7/7 passing
 ```
 
-The Phase 2 harness checks that the market maker connected and quoted, the
+The trading harness checks that the market maker connected and quoted, the
 flow generator produced real fills, fills moved inventory and cash, the
 reservation price skewed in the correct direction, quotes refreshed at ~1s
 cadence, PnL was logged every tick, and neither process crashed. The
@@ -256,7 +278,7 @@ ops-layer/
 ├── venue_client/      Python asyncio client: framing, dispatch, shared protocol helpers
 ├── market_maker/      fair_value.py, quoting.py, state.py, main.py — the quoting strategy and its bookkeeping
 ├── flow_generator/    noise_trader.py — independent marketable order flow
-├── tools/             acceptance_test.py (Phase 1) and phase2_acceptance_test.py (Phase 2) — live end-to-end harnesses
+├── tools/             venue_acceptance_test.py and trading_acceptance_test.py — live end-to-end harnesses
 └── tests/             pytest unit/component suite
 ```
 

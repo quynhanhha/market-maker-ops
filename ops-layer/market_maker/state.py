@@ -1,9 +1,4 @@
-"""Inventory, cash, and mark-to-market PnL bookkeeping.
-
-Pure bookkeeping. The venue's FILL message has no
-side field (see protocol.cpp's encodeFill), so callers must track which
-side each client_order_id was submitted on and pass it in explicitly.
-"""
+"""FILL messages omit side; callers must supply the submitted order side."""
 
 from __future__ import annotations
 

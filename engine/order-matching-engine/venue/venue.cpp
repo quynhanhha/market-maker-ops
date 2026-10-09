@@ -73,9 +73,7 @@ void Venue::handleNewOrder(ConnId conn, const InboundMessage& m) {
         send_(conn, encodeReject(cid, "venue_full", ts));
         return;
     }
-    // Reject-on-self-cross (self-trade prevention). Stricter than the engine's
-    // cancel-remainder SMP, but it keeps tables exact and means the engine's
-    // SMP branch is never exercised.
+    // Reject self-crosses before the core's cancel-remainder path can desync venue tables.
     if (wouldSelfCross(conn, m.side, m.priceTicks)) {
         send_(conn, encodeReject(cid, "self_match", ts));
         return;

@@ -10,15 +10,12 @@
 
 namespace venue {
 
-// Single-threaded poll() TCP server. Owns all sockets and per-connection buffers;
-// every engine call happens on this one thread (no locks). Frames inbound bytes
-// with FrameDecoder, frames every outbound payload, and broadcasts a periodic
-// HEARTBEAT + MARKET_DATA feed (plus MARKET_DATA when the top of book moves).
+// All socket and venue operations share one poll() thread.
 class Server {
 public:
     Server(uint16_t port, std::size_t bookCapacity, std::size_t softCap, int heartbeatMs);
 
-    int run();  // blocks; returns non-zero only on setup failure
+    int run();  // Blocks; setup and poll failures return nonzero.
 
 private:
     struct Conn {

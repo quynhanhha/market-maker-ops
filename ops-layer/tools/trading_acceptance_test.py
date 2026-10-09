@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""
-Spins up the venue, runs the market maker and flow generator together for
-a fixed duration, and asserts the full Phase 2 acceptance checklist from
-phase2-market-maker-spec.md against what actually happened, then tears
-down. Run from the repo root:
-
-    python3 ops-layer/tools/phase2_acceptance_test.py [--port 9200] [--duration 30]
-
---duration 300 runs the spec's literal "5 minutes" checklist; the default
-(30s) samples the same locked cadence (1s ticks, 2-8s flow generator
-fires) over a shorter window so the script stays fast to re-run.
-"""
+"""Run the two-process trading workload and check its acceptance criteria."""
 
 from __future__ import annotations
 
@@ -18,13 +7,14 @@ import argparse
 import asyncio
 import contextlib
 import io
+import json
 import os
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import IO, Iterator, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from flow_generator.noise_trader import run as nt_run  # noqa: E402
@@ -38,11 +28,14 @@ REPO = Path(__file__).resolve().parents[2]
 VENUE = REPO / "engine/order-matching-engine/build/venue_server"
 
 
-def start_venue(port: int) -> subprocess.Popen:
+def start_venue(
+    port: int, *, stdout: IO[str] | None = None,
+    stderr: IO[str] | int = subprocess.PIPE,
+) -> subprocess.Popen:
     if not VENUE.exists():
         raise RuntimeError(f"venue binary not found at {VENUE} — build it first")
     proc = subprocess.Popen([str(VENUE), "--port", str(port), "--heartbeat-ms", "1000"],
-                            stderr=subprocess.PIPE)
+                            stdout=stdout, stderr=stderr)
     for _ in range(80):
         if proc.poll() is not None:
             raise RuntimeError("venue exited during startup")
@@ -63,23 +56,48 @@ class IntegrationResult(NamedTuple):
     nt_error: Exception | None
 
 
-async def gather(port: int, duration: float) -> IntegrationResult:
-    """Run market_maker.main.run() and flow_generator.noise_trader.run()
-    together (production defaults — no accelerated cadence) for
-    `duration` seconds, capturing their stdout, then cancel both and take
-    one final MARKET_DATA snapshot from an independent observer."""
+@contextlib.contextmanager
+def capture_trading_stdout(evidence_dir: Path | None) -> Iterator[io.StringIO]:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            yield buf
+        finally:
+            if evidence_dir is not None:
+                (evidence_dir / "trading.stdout.log").write_text(buf.getvalue())
+
+
+async def gather(
+    port: int, duration: float, evidence_dir: Path | None = None,
+) -> IntegrationResult:
+    """Use production cadence; cancel trading tasks before the final observer snapshot."""
     state = PositionState()
     fv = RandomWalkFairValue()
     mm_error: Exception | None = None
     nt_error: Exception | None = None
 
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
+    with capture_trading_stdout(evidence_dir) as buf:
         mm_task = asyncio.create_task(
             mm_run(port=port, run_id="mm", fair_value_source=fv, state=state))
         nt_task = asyncio.create_task(nt_run(port=port, run_id="nt"))
 
-        await asyncio.sleep(duration)
+        workload_start = time.monotonic()
+        completed = False
+        try:
+            await asyncio.sleep(duration)
+            completed = True
+        finally:
+            workload_elapsed = time.monotonic() - workload_start
+            if evidence_dir is not None:
+                (evidence_dir / "workload.json").write_text(json.dumps({
+                    "configured_duration_seconds": duration,
+                    "elapsed_seconds": workload_elapsed,
+                    "wait_completed": completed,
+                    "boundary": "before duration sleep to sleep completion; excludes task cancellation, observer and venue teardown",
+                    "processes": 2,
+                    "trading_connections": 2,
+                    "random_seeds": "unspecified",
+                }, indent=2) + "\n")
 
         mm_task.cancel()
         nt_task.cancel()
@@ -107,14 +125,7 @@ async def gather(port: int, duration: float) -> IntegrationResult:
                               last_trade=last_trade, mm_error=mm_error, nt_error=nt_error)
 
 
-# ── Criteria ────────────────────────────────────────────────────────────────
-# Each returns (ok: bool, detail: str). Pure — take an IntegrationResult,
-# no I/O — so they're independently unit-testable without the slow run.
-
-
 def c1_market_maker_quoted(result: IntegrationResult):
-    # The live-wait ordering itself is commit 4's job (fake-server test);
-    # here we just confirm startup succeeded and quoting actually began.
     ok = len(result.tick_lines) > 0
     return ok, f"{len(result.tick_lines)} tick lines logged"
 
@@ -125,7 +136,7 @@ def c2_flow_generator_produced_real_fills(result: IntegrationResult):
 
 
 def c3_fills_moved_state(result: IntegrationResult):
-    # Corroborating signal — the arithmetic itself is commit 3/5's job.
+    # Nonzero cash corroborates fills; it does not verify state arithmetic.
     ok = result.state.cash != 0.0
     return ok, f"inventory={result.state.inventory} cash={result.state.cash:.2f}"
 
@@ -162,17 +173,39 @@ def main() -> None:
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument("--tick-interval", type=float, default=1.0,
                      help="only for c5's expected-tick-count math; not a routine flag")
+    ap.add_argument("--evidence-dir", type=Path,
+                    help="new directory for full trading/venue logs and timing metadata")
     args = ap.parse_args()
 
-    proc = start_venue(args.port)
-    try:
-        result = asyncio.run(gather(args.port, args.duration))
-    finally:
-        proc.terminate()
+    with contextlib.ExitStack() as stack:
+        venue_stdout = None
+        venue_stderr = subprocess.PIPE
+        if args.evidence_dir is not None:
+            args.evidence_dir.mkdir(parents=True, exist_ok=False)
+            venue_stdout = stack.enter_context((args.evidence_dir / "venue.stdout.log").open("w"))
+            venue_stderr = stack.enter_context((args.evidence_dir / "venue.stderr.log").open("w"))
+        proc = start_venue(args.port, stdout=venue_stdout, stderr=venue_stderr)
         try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            result = asyncio.run(gather(args.port, args.duration, args.evidence_dir))
+        finally:
+            before_teardown = proc.poll()
+            forced_kill = False
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                forced_kill = True
+                proc.kill()
+                proc.wait()
+            if args.evidence_dir is not None:
+                (args.evidence_dir / "venue-process.json").write_text(json.dumps({
+                    "pid": proc.pid,
+                    "command": proc.args,
+                    "returncode_before_teardown": before_teardown,
+                    "termination_requested": True,
+                    "forced_kill": forced_kill,
+                    "returncode_after_teardown": proc.returncode,
+                }, indent=2) + "\n")
 
     checks = [
         ("1. market maker connected and quoted", lambda: c1_market_maker_quoted(result)),
@@ -181,7 +214,7 @@ def main() -> None:
         ("4. reservation price skewed the right direction", lambda: c4_reservation_price_direction_correct(result)),
         ("5. quotes refresh at ~1s cadence", lambda: c5_tick_cadence_roughly_1s(result, args.duration, args.tick_interval)),
         ("6. PnL computed and logged every tick", lambda: c6_pnl_logged_every_tick(result)),
-        ("7. no crash in either process", lambda: c7_no_crash(result)),
+        ("7. no exception in either trading task", lambda: c7_no_crash(result)),
     ]
 
     results = []

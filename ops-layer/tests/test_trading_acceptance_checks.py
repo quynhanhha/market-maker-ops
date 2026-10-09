@@ -1,5 +1,3 @@
-"""Fast, synchronous tests for phase2_acceptance_test.py's criterion
-functions. construct IntegrationResult by hand, no venue, no async run."""
 
 from __future__ import annotations
 
@@ -8,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from market_maker.state import PositionState  # noqa: E402
-from tools.phase2_acceptance_test import (  # noqa: E402
+from tools.trading_acceptance_test import (  # noqa: E402
     IntegrationResult,
     c1_market_maker_quoted,
     c2_flow_generator_produced_real_fills,
@@ -57,13 +55,13 @@ def test_c3_checks_cash_moved():
 def test_c4_direction_correct_for_long_inventory():
     state = PositionState(cash=-1000.0, inventory=10)
     ok, _ = c4_reservation_price_direction_correct(_result(state=state, fair_value=100.0))
-    assert ok  # reservation_price(100, 10) = 99.90 < 100.0
+    assert ok
 
 
 def test_c4_direction_correct_for_short_inventory():
     state = PositionState(cash=1000.0, inventory=-10)
     ok, _ = c4_reservation_price_direction_correct(_result(state=state, fair_value=100.0))
-    assert ok  # reservation_price(100, -10) = 100.10 > 100.0
+    assert ok
 
 
 def test_c4_inconclusive_on_zero_inventory():
@@ -85,7 +83,7 @@ def test_c5_far_outside_tolerance_fails():
 
 
 def test_c6_fails_if_any_tick_line_missing_pnl():
-    lines = ["tick pnl=0.20 bid=99.98", "tick bid=99.98 ask=100.02"]  # second missing pnl=
+    lines = ["tick pnl=0.20 bid=99.98", "tick bid=99.98 ask=100.02"]
     ok, _ = c6_pnl_logged_every_tick(_result(tick_lines=lines))
     assert not ok
 

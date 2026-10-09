@@ -10,10 +10,6 @@
 
 using namespace venue;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Protocol encode / decode
-// ─────────────────────────────────────────────────────────────────────────────
-
 TEST(Protocol, ParsesValidNewOrder) {
     auto m = parseInbound(
         R"({"type":"NEW_ORDER","client_order_id":"abc123","symbol":"SIM1","side":"BUY","price":100.02,"qty":100,"ts":"t"})");
@@ -26,7 +22,7 @@ TEST(Protocol, ParsesValidNewOrder) {
     EXPECT_TRUE(m.hasSide);
     EXPECT_EQ(m.side, OrderSide::Buy);
     EXPECT_TRUE(m.hasPrice);
-    EXPECT_EQ(m.priceTicks, 10002u);  // 100.02 * 100
+    EXPECT_EQ(m.priceTicks, 10002u);
     EXPECT_TRUE(m.hasQty);
     EXPECT_EQ(m.qty, 100u);
 }
@@ -34,7 +30,7 @@ TEST(Protocol, ParsesValidNewOrder) {
 TEST(Protocol, DecimalPriceEdgeCases) {
     EXPECT_EQ(parseInbound(R"({"type":"NEW_ORDER","price":100})").priceTicks, 10000u);
     EXPECT_EQ(parseInbound(R"({"type":"NEW_ORDER","price":100.5})").priceTicks, 10050u);
-    EXPECT_FALSE(parseInbound(R"({"type":"NEW_ORDER","price":100.025})").hasPrice);  // >2 dp
+    EXPECT_FALSE(parseInbound(R"({"type":"NEW_ORDER","price":100.025})").hasPrice);
     EXPECT_FALSE(parseInbound(R"({"type":"NEW_ORDER","price":-5})").hasPrice);
     EXPECT_FALSE(parseInbound(R"({"type":"NEW_ORDER","price":"x"})").hasPrice);
 }
@@ -48,9 +44,9 @@ TEST(Protocol, ParsesCancelAndHeartbeat) {
 
 TEST(Protocol, RejectsMalformed) {
     EXPECT_TRUE(parseInbound("not json").parseError);
-    EXPECT_TRUE(parseInbound(R"({"type":"NEW_ORDER")").parseError);   // unterminated
-    EXPECT_TRUE(parseInbound(R"({"client_order_id":"x"})").parseError);  // no type
-    EXPECT_TRUE(parseInbound(R"({"type":5})").parseError);            // type not a string
+    EXPECT_TRUE(parseInbound(R"({"type":"NEW_ORDER")").parseError);
+    EXPECT_TRUE(parseInbound(R"({"client_order_id":"x"})").parseError);
+    EXPECT_TRUE(parseInbound(R"({"type":5})").parseError);
 }
 
 TEST(Protocol, EncodersMatchSpecShape) {
@@ -75,14 +71,10 @@ TEST(Protocol, TicksToDecimal) {
 }
 
 TEST(Protocol, JsonEscapesClientOrderId) {
-    // A client_order_id with a quote must not break the framing/JSON.
+
     const std::string ack = encodeAck(R"(a"b)", "e-1", "t");
     EXPECT_NE(ack.find(R"("client_order_id":"a\"b")"), std::string::npos);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Framing
-// ─────────────────────────────────────────────────────────────────────────────
 
 TEST(Framing, RoundTripsMultipleFramesAcrossFeeds) {
     const std::string f1 = encodeFrame("{\"a\":1}");
@@ -116,17 +108,13 @@ TEST(Framing, BadMagicIsAStickyError) {
 
 TEST(Framing, OverLengthIsRejected) {
     FrameDecoder dec;
-    // Valid magic, but a length above the 1 MiB cap.
+
     char hdr[8] = {0x56, 0x45, 0x4E, 0x31, 0x7F, char(0xFF), char(0xFF), char(0xFF)};
     dec.feed(hdr, sizeof(hdr));
     std::string payload;
     EXPECT_FALSE(dec.next(payload));
     EXPECT_TRUE(dec.error());
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Venue behaviour via a capturing send seam
-// ─────────────────────────────────────────────────────────────────────────────
 
 class VenueTest : public ::testing::Test {
 protected:
@@ -166,9 +154,9 @@ TEST_F(VenueTest, AcksValidRestingOrderWithExchangeId) {
 
 TEST_F(VenueTest, RejectReasons) {
     auto v = makeVenue();
-    v.handleLine(1, newOrder("o1", "SELL", "100.00", 0));                 // bad_qty
-    v.handleLine(1, newOrder("o2", "SELL", "100.025", 5));               // bad_price (>2dp)
-    v.handleLine(1, newOrder("o3", "SELL", "100.00", 5, "WRONG"));       // unknown_symbol
+    v.handleLine(1, newOrder("o1", "SELL", "100.00", 0));
+    v.handleLine(1, newOrder("o2", "SELL", "100.025", 5));
+    v.handleLine(1, newOrder("o3", "SELL", "100.00", 5, "WRONG"));
     EXPECT_EQ(count(1, "bad_qty"), 1);
     EXPECT_EQ(count(1, "bad_price"), 1);
     EXPECT_EQ(count(1, "unknown_symbol"), 1);
@@ -190,10 +178,10 @@ TEST_F(VenueTest, SelfCrossRejected) {
 
 TEST_F(VenueTest, CrossBetweenTwoParticipantsFillsBothWithRemaining) {
     auto v = makeVenue();
-    v.handleLine(1, newOrder("rest", "SELL", "100.00", 10));  // conn1 rests 10
-    v.handleLine(2, newOrder("aggr", "BUY", "100.00", 4));    // conn2 buys 4
-    EXPECT_EQ(count(2, R"("remaining_qty":0)"), 1);  // aggressor fully filled
-    EXPECT_EQ(count(1, R"("remaining_qty":6)"), 1);  // resting has 6 left
+    v.handleLine(1, newOrder("rest", "SELL", "100.00", 10));
+    v.handleLine(2, newOrder("aggr", "BUY", "100.00", 4));
+    EXPECT_EQ(count(2, R"("remaining_qty":0)"), 1);
+    EXPECT_EQ(count(1, R"("remaining_qty":6)"), 1);
     EXPECT_EQ(count(1, R"("fill_price":100.00)"), 1);
 }
 
@@ -221,7 +209,7 @@ TEST_F(VenueTest, CancelUnknownReturnsNotFound) {
 TEST_F(VenueTest, CancelAlreadyFilled) {
     auto v = makeVenue();
     v.handleLine(1, newOrder("rest", "SELL", "100.00", 10));
-    v.handleLine(2, newOrder("aggr", "BUY", "100.00", 10));  // fully fills conn1's order
+    v.handleLine(2, newOrder("aggr", "BUY", "100.00", 10));
     v.handleLine(1, cancel("rest"));
     EXPECT_EQ(count(1, R"("reason":"already_filled")"), 1);
 }

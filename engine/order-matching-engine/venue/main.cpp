@@ -34,7 +34,7 @@ bool parseU64(const char* s, uint64_t& out) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    uint16_t port = 9200;  // single source of the default; env/flag override below
+    uint16_t port = 9200;
     uint64_t capacity = 1u << 20;  // max live (resting) orders admitted
     int heartbeatMs = 1000;
 
@@ -89,9 +89,7 @@ int main(int argc, char** argv) {
     // Never let a peer disconnect take the process down via SIGPIPE.
     std::signal(SIGPIPE, SIG_IGN);
 
-    // Size the pool above the admitted soft cap: headroom for the transient
-    // incoming order plus a safety margin, so the engine's unchecked pool can
-    // never be exhausted.
+    // Leave pool headroom for an incoming order beyond the admitted live-order cap.
     const std::size_t softCap = static_cast<std::size_t>(capacity);
     const std::size_t bookCapacity = softCap + 64;
 

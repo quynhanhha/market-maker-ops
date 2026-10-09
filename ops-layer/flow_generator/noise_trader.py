@@ -1,8 +1,3 @@
-"""Flow generator ("noise trader").
-
-Fires on a random interval, crosses whatever's currently resting. No fair
-value model, no strategy, exists only to guarantee real fills happen.
-"""
 
 from __future__ import annotations
 
@@ -28,15 +23,7 @@ async def run(
     live_timeout: float = 5.0,
     max_fires: int | None = None,
 ) -> None:
-    """Connect, wait for the first live signal, then repeatedly: sleep a
-    random interval, read the currently-tracked best_bid/best_ask, submit
-    one marketable order crossing it (random side, qty 1-5) — or skip and
-    retry if that side's price isn't available yet (empty book).
-
-    max_fires counts successful submissions only — a skipped, empty-book
-    attempt doesn't consume the budget. None (main()'s default) runs
-    forever; tests pass a small number so they can await it directly.
-    """
+    """max_fires counts submissions, excluding skipped empty-book attempts."""
     next_id = make_client_order_id("nt", run_id)
     rng = rng or random.Random()
 

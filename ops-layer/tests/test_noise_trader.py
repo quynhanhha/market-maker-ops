@@ -1,4 +1,3 @@
-"""Tests for flow_generator.noise_trader."""
 
 from __future__ import annotations
 
@@ -34,8 +33,6 @@ def _raw_frame(obj: dict) -> bytes:
 
 
 class _FixedRng:
-    """Duck-types random.Random's uniform/choice/randint with fixed values,
-    so firing is deterministic instead of waiting out real 2-8s randomness."""
 
     def __init__(self, interval: float = 0.05, side: str = "BUY", qty: int = 3):
         self._interval = interval
@@ -50,9 +47,6 @@ class _FixedRng:
 
     def randint(self, a: int, b: int) -> int:
         return self._qty
-
-
-# ── Fake server: price selection + empty-book skip ──────────────────────
 
 
 def test_prices_off_current_top_and_skips_when_book_empty():
@@ -94,9 +88,6 @@ def test_prices_off_current_top_and_skips_when_book_empty():
     _run(body())
 
 
-# ── Real venue: produces genuine fills against the market maker ─────────
-
-
 def _start_venue(port: int) -> subprocess.Popen:
     proc = subprocess.Popen(
         [str(VENUE_BIN), "--port", str(port), "--heartbeat-ms", "1000"],
@@ -127,11 +118,7 @@ def test_noise_trader_produces_real_fills_against_market_maker():
 
             await asyncio.sleep(0.3)  # let the market maker post its first quote
 
-            # Every fire is a BUY crossing the market maker's ask, so the
-            # market maker's own fill side is always SELL, inventory can
-            # only move one direction regardless of exact partial-fill
-            # mechanics, which makes this assertion deterministic without
-            # needing to predict exact async-scheduling timing.
+            # One-way flow makes inventory direction independent of scheduling.
             fixed_rng = _FixedRng(interval=0.05, side="BUY", qty=3)
             await nt_run(port=port, run_id="nt", rng=fixed_rng, max_fires=6)
 

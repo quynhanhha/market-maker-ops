@@ -1,10 +1,4 @@
-"""Shared asyncio venue protocol client.
-
-Wire framing: [4-byte magic 0x56454E31 "VEN1"][4-byte big-endian uint32
-payload length][JSON payload]. Matches engine/order-matching-engine/venue/
-framing.h exactly.
-
-"""
+"""Async TCP client using the framing defined in venue/framing.h."""
 
 from __future__ import annotations
 
@@ -21,11 +15,7 @@ Handler = Callable[[dict], Union[None, Awaitable[None]]]
 
 
 class FramingError(Exception):
-    """A structural framing violation — bad magic or an over-length frame.
-
-    Distinct from an application-level REJECT: this means the byte stream
-    itself is corrupt, not that the venue disliked a message.
-    """
+    """Structural framing failure, distinct from an application REJECT."""
 
 
 def encode_frame(obj: dict) -> bytes:
@@ -49,16 +39,11 @@ class VenueClient:
         return cls(reader, writer)
 
     def on(self, msg_type: str, handler: Handler) -> None:
-        """Register a callback for one message type, or "*" for every
-        message. Handler may be a plain function or a coroutine function."""
+        """Handlers may be synchronous or async; "*" receives every message."""
         self._handlers.setdefault(msg_type, []).append(handler)
 
     def start(self) -> None:
-        """Launch the background receive-loop task.
-
-        Call after registering handlers with on() — starting first would
-        risk dispatching messages before any listener exists.
-        """
+        """Register handlers before starting to avoid losing early messages."""
         if self._recv_task is None:
             self._recv_task = asyncio.create_task(self._receive_loop())
 
@@ -67,11 +52,7 @@ class VenueClient:
         await self._writer.drain()
 
     async def wait_for(self, msg_type: str, timeout: float = 2.0) -> dict | None:
-        """One-off async wait for the next message of a given type.
-
-        Works whether or not start() has been called — if the receive
-        loop isn't running yet, this drives it directly.
-        """
+        """Start receiving if needed; return None on timeout."""
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._waiters.setdefault(msg_type, []).append(fut)
         if self._recv_task is None:
@@ -116,7 +97,7 @@ class VenueClient:
                 await self._dispatch(msg)
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # noqa: BLE001 - store and stop, no reconnection logic here
+        except Exception as e:  # noqa: BLE001 — receiver errors are stored; no reconnection
             self.error = e
         finally:
             self.closed = True

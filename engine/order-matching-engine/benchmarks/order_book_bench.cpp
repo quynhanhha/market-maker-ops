@@ -6,10 +6,6 @@
 
 #include "order_book.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INPUT GENERATORS (Pre-computed, no RNG in timed loops)
-// ─────────────────────────────────────────────────────────────────────────────
-
 struct OrderInput {
     Side side;
     uint32_t price;
@@ -151,15 +147,7 @@ private:
     std::mt19937_64 rng_;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NO-OP CALLBACK (minimal overhead)
-// ─────────────────────────────────────────────────────────────────────────────
-
 inline void noOpCallback(const Trade&) {}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BENCHMARK: ADD ONLY (Resting Orders)
-// ─────────────────────────────────────────────────────────────────────────────
 
 static void BM_AddOnly_Resting(benchmark::State& state) {
     const auto numOrders = static_cast<std::size_t>(state.range(0));
@@ -191,10 +179,6 @@ BENCHMARK(BM_AddOnly_Resting)
     ->Arg(1000)
     ->Arg(10000)
     ->Unit(benchmark::kMicrosecond);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BENCHMARK: MATCH HEAVY (Crossing Orders)
-// ─────────────────────────────────────────────────────────────────────────────
 
 static void BM_MatchHeavy(benchmark::State& state) {
     const auto numResting = static_cast<std::size_t>(state.range(0));
@@ -236,10 +220,6 @@ BENCHMARK(BM_MatchHeavy)
     ->Arg(10000)
     ->Unit(benchmark::kMicrosecond);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BENCHMARK: CANCEL ONLY
-// ─────────────────────────────────────────────────────────────────────────────
-
 static void BM_CancelOnly(benchmark::State& state) {
     const auto numOrders = static_cast<std::size_t>(state.range(0));
     
@@ -280,10 +260,6 @@ BENCHMARK(BM_CancelOnly)
     ->Arg(10000)
     ->Unit(benchmark::kMicrosecond);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BENCHMARK: MIXED WORKLOAD (70% add-rest, 20% cancel, 10% add-cross)
-// ─────────────────────────────────────────────────────────────────────────────
-
 static void BM_MixedWorkload(benchmark::State& state) {
     const auto numOps = static_cast<std::size_t>(state.range(0));
     
@@ -323,10 +299,6 @@ BENCHMARK(BM_MixedWorkload)
     ->Arg(10000)
     ->Arg(100000)
     ->Unit(benchmark::kMicrosecond);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BENCHMARK: SINGLE ADD LATENCY (Microbenchmark)
-// ─────────────────────────────────────────────────────────────────────────────
 
 static void BM_SingleAdd_Empty(benchmark::State& state) {
     // Varying prices to prevent trivial branch prediction

@@ -3,10 +3,6 @@
 
 #include "order_pool.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTRUCTION
-// ─────────────────────────────────────────────────────────────────────────────
-
 TEST(OrderPoolTest, ConstructorInitializesCorrectly) {
     const std::size_t N = 10;
     OrderPool pool(N);
@@ -14,10 +10,6 @@ TEST(OrderPoolTest, ConstructorInitializesCorrectly) {
     EXPECT_EQ(pool.capacity(), N);
     EXPECT_EQ(pool.freeCount(), N);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ALLOCATION
-// ─────────────────────────────────────────────────────────────────────────────
 
 TEST(OrderPoolTest, AllocatesUpToCapacity) {
     const std::size_t N = 4;
@@ -31,7 +23,7 @@ TEST(OrderPoolTest, AllocatesUpToCapacity) {
     Order* o4 = pool.allocate();
 
     EXPECT_NE(o1, nullptr);
-    EXPECT_NE(o2, nullptr); 
+    EXPECT_NE(o2, nullptr);
     EXPECT_NE(o3, nullptr);
     EXPECT_NE(o4, nullptr);
 
@@ -62,10 +54,6 @@ TEST(OrderPoolTest, AllocatedOrderHasNullPrevNext) {
     EXPECT_EQ(o2->prev, nullptr);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DEALLOCATION
-// ─────────────────────────────────────────────────────────────────────────────
-
 TEST(OrderPoolTest, DeallocateIncreasesFreeCount) {
     OrderPool pool(2);
 
@@ -79,10 +67,6 @@ TEST(OrderPoolTest, DeallocateIncreasesFreeCount) {
     pool.deallocate(o2);
     EXPECT_EQ(pool.freeCount(), 2);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// REUSE / LIFO BEHAVIOR
-// ─────────────────────────────────────────────────────────────────────────────
 
 TEST(OrderPoolTest, ReusesDeallocatedOrders) {
     OrderPool pool(1);
@@ -120,10 +104,6 @@ TEST(OrderPoolTest, DeallocateAllocateIsLIFO) {
     EXPECT_EQ(pool.allocate(), o1);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FULL CYCLE
-// ─────────────────────────────────────────────────────────────────────────────
-
 TEST(OrderPoolTest, FullCycle) {
     const std::size_t N = 5;
     OrderPool pool(N);
@@ -148,13 +128,9 @@ TEST(OrderPoolTest, FullCycle) {
     EXPECT_EQ(pool.freeCount(), 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DEATH TESTS
-// ─────────────────────────────────────────────────────────────────────────────
-
 TEST(OrderPoolDeathTest, AllocateWhenEmptyAsserts) {
     OrderPool pool(1);
-    pool.allocate();  
+    pool.allocate();
 
     EXPECT_DEATH(pool.allocate(), "");
 }
@@ -169,7 +145,7 @@ TEST(OrderPoolDeathTest, DeallocateWhenFullAsserts) {
     OrderPool pool(1);
 
     Order* o = pool.allocate();
-    pool.deallocate(o);  
+    pool.deallocate(o);
 
     EXPECT_DEATH(pool.deallocate(o), "");
 }
@@ -178,7 +154,7 @@ TEST(OrderPoolDeathTest, DoubleDeallocateAsserts) {
     OrderPool pool(3);
 
     Order* o1 = pool.allocate();
-    (void)pool.allocate(); 
+    (void)pool.allocate();
 
     pool.deallocate(o1);
 

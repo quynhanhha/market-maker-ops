@@ -13,10 +13,6 @@
 
 #include "order_book.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HIGH-RESOLUTION TIMER (platform-specific)
-// ─────────────────────────────────────────────────────────────────────────────
-
 class HighResTimer {
 public:
     HighResTimer() {
@@ -114,10 +110,6 @@ private:
     std::vector<int64_t> samples_;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INPUT GENERATION
-// ─────────────────────────────────────────────────────────────────────────────
-
 struct OrderInput {
     Side side;
     uint32_t price;
@@ -147,15 +139,7 @@ std::vector<OrderInput> generateRestingOrders(std::size_t count, std::mt19937_64
     return inputs;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NO-OP CALLBACK
-// ─────────────────────────────────────────────────────────────────────────────
-
 inline void noOpCallback(const Trade&) {}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ESCAPE SINK (Prevent compiler from eliminating "unused" values)
-// ─────────────────────────────────────────────────────────────────────────────
 
 static volatile uint64_t g_sink = 0;
 
@@ -167,10 +151,6 @@ inline void escape(T* p) {
 inline void clobber() {
     asm volatile("" : : : "memory");
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WARMUP
-// ─────────────────────────────────────────────────────────────────────────────
 
 void warmup() {
     OrderBook book(10000, noOpCallback);
@@ -495,10 +475,6 @@ void benchmarkMixedWorkload(std::size_t iterations, const HighResTimer& timer) {
     cancelCollector.computeAndPrint("Cancel");
     matchCollector.computeAndPrint("Add (Crossing/Match)");
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN
-// ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
     std::size_t iterations = 10000;  // reduced for batched measurements

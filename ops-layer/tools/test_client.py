@@ -1,8 +1,4 @@
-"""Minimal frame-aware venue client
-
-Wire framing: [4-byte magic 0x56454E31 "VEN1"][4-byte big-endian uint32 payload
-length][JSON payload].
-"""
+"""Synchronous TCP client for venue acceptance checks."""
 
 import json
 import select
@@ -29,7 +25,6 @@ class VenueClient:
         self.sock.sendall(encode_frame(obj))
 
     def send_raw(self, data: bytes) -> None:
-        """Send arbitrary bytes (used to inject a malformed frame payload)."""
         self.sock.sendall(data)
 
     def drain(self) -> None:
@@ -74,7 +69,7 @@ class VenueClient:
         return [m.get("type") for m in self.msgs]
 
     def hard_reset_close(self) -> None:
-        """Force an RST (abrupt kill) rather than a graceful FIN."""
+        """Force TCP RST instead of a graceful FIN."""
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         self.sock.close()
 
