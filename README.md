@@ -281,14 +281,3 @@ ops-layer/
 ├── tools/             venue_acceptance_test.py and trading_acceptance_test.py — live end-to-end harnesses
 └── tests/             pytest unit/component suite
 ```
-
-## Next
-
-The next phase adds an operations layer on top of this venue: fault
-injection (killing the connection, delaying a response, dropping a
-message), health checks and state reconciliation, a deterministic playbook
-executor for recovering automatically, and an escalation policy that hands
-off to a real Slack ping when a fault is outside its authority to resolve
-alone. The phase boundaries named above (no reconnection, no risk limits,
-no inbound liveness timeout) exist so there's real failure surface for that 
-layer to work against.
