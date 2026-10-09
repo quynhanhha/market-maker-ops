@@ -1,282 +1,186 @@
 # Trading Operations Autopilot
 
-A live exchange venue and a Python market maker trade against each other
-continuously over an explicit wire protocol — two independent processes,
-socket-connected, with no shared memory or in-process calls between them.
-An independent flow generator provides real counterparty order flow, so
-every fill, inventory change, and quote skew below happened through the
-live venue.
+A cross-language trading system integrating a C++20 exchange venue, Python market maker, and independent order-flow generator over TCP.
 
-The matching core is reused from an existing order book implementation;
-the wire protocol, the venue wrapper, the Python client, the
-market-making strategy, and the flow generator are new.
+The project focuses on network protocol design, asynchronous event processing, order lifecycle management, and trading-state bookkeeping. It reuses an existing C++ order-matching core and builds the exchange and trading components around it.
 
 ## Architecture
 
 ```mermaid
 graph LR
-    subgraph PY ["ops-layer (Python, asyncio)"]
-        FG["Flow Generator<br/>noise_trader.py"]
-        MM["Market Maker<br/>fair_value + quoting + state"]
-        VC["venue_client<br/>framing / dispatch"]
+    subgraph Python["Python / asyncio"]
+        FG["Flow Generator"]
+        MM["Market Maker"]
+        VC["TCP Client"]
         FG --> VC
         MM --> VC
     end
 
-    subgraph CPP ["exchange venue (C++20, one process)"]
-        SRV["Server<br/>poll()-based TCP, framing"]
-        VEN["Venue<br/>protocol / validation wrapper"]
-        OB["OrderBook<br/>matching core — reused, untouched"]
+    subgraph CPP["C++20 Exchange Venue"]
+        SRV["TCP Server"]
+        VEN["Venue"]
+        OB["OrderBook"]
         SRV --> VEN --> OB
     end
 
-    VC -- "NEW_ORDER / CANCEL<br/>(VEN1-framed JSON)" --> SRV
-    SRV -- "ACK / REJECT / FILL /<br/>HEARTBEAT / MARKET_DATA" --> VC
+    VC -- "NEW_ORDER / CANCEL" --> SRV
+    SRV -- "ACK / REJECT / FILL / MARKET_DATA" --> VC
 ```
 
-The market maker and the flow generator are independent processes that 
-only interact through the venue, the same way two unrelated participants 
-would on a real exchange.
+The exchange runs as a standalone C++ process. The market maker and flow generator use independent TCP connections and can run as separate Python processes. The automated trading acceptance harness runs both Python components as asynchronous tasks in one process.
 
-**Current milestone:** the venue and market maker above are fully built and
-independently verified — 89/89 C++ unit tests, 42/42 Python unit tests, and
-two live multi-process acceptance runs (7/7 criteria each) covering a
-30-second sample and the project's literal 300-second soak. Detail in
-[Verification](#verification).
+### Exchange venue
 
-## What currently works
+`engine/order-matching-engine/venue/`
 
-### Exchange venue — `engine/order-matching-engine/venue/`
+- Single-threaded, `poll()`-based TCP server handling multiple connections.
+- Custom framing protocol: 4-byte `VEN1` magic, 4-byte big-endian payload length, and JSON payload.
+- Order submission, cancellation, acknowledgement, rejection, fill, heartbeat, and market-data messages.
+- Client-to-exchange order ID mapping, input validation, self-cross rejection, and fill routing.
+- Periodic heartbeats and market-data updates, with additional updates on top-of-book changes.
+- Integration with the existing matching engine through its public API.
 
-- Standalone TCP process (`venue_server`), single-threaded `poll()` event
-  loop over all connections, no locks.
-- Wire framing — `[4-byte magic "VEN1"][4-byte big-endian length][JSON
-  payload]` — implemented once in C++ (`framing.h`/`.cpp`) and mirrored
-  exactly in Python (`venue_client/client.py`).
-- Full message set: `NEW_ORDER`, `CANCEL` inbound; `ACK`, `REJECT`,
-  `CANCEL_ACK`, `CANCEL_REJECT`, `FILL`, `HEARTBEAT`, `MARKET_DATA` outbound.
-- A thin `Venue` wrapper owns protocol-level state the matching core doesn't
-  provide — client-order-id ↔ exchange-order-id mapping, field validation,
-  reject-on-self-cross, FILL routing — and touches the matching core only
-  through its public API (`addLimitOrder`, `cancelOrder`, `bestBid`/`bestAsk`,
-  a trade callback).
-- HEARTBEAT and MARKET_DATA broadcast on a fixed cadence, plus MARKET_DATA
-  pushed immediately whenever the top of book changes.
-- The matching core itself (`order_book.h`, `order_pool.h`, `price_level.h`)
-  is reused unmodified from the original engine — the venue layer is a
-  zero-diff wrapper over it.
+### Market maker
 
-### Market maker — `ops-layer/market_maker/`
+`ops-layer/market_maker/`
 
-- Maintains its own fair value: a private Gaussian random walk, deliberately
-  independent of the venue's own `MARKET_DATA` — see
-  [Engineering decisions](#engineering-decisions).
-- Computes an inventory-skewed reservation price and quotes a fixed spread
-  symmetrically around it.
-- Requotes every tick: cancels both resting orders unconditionally,
-  recomputes from the latest fair value and current inventory, submits a
-  fresh bid + ask.
-- Tracks inventory, cash, and mark-to-market PnL from live `FILL` messages.
-  `FILL` carries no side field, so the market maker tracks which side each
-  `client_order_id` was submitted on and applies it on receipt.
-- Incoming-message dispatch (`HEARTBEAT`/`MARKET_DATA`/`FILL`/`REJECT`) and
-  the requote tick loop run as two independently-scheduled coroutines under
-  one asyncio event loop — a `FILL` can update state at any point between
-  ticks.
+- Models fair value using an independent Gaussian random walk.
+- Computes inventory-adjusted reservation prices and bid/ask quotes.
+- Cancels and replaces resting quotes at one-second intervals.
+- Updates inventory, cash, and mark-to-market PnL from received fills.
+- Uses `asyncio` to coordinate message handling and periodic quoting.
 
-### Flow generator — `ops-layer/flow_generator/noise_trader.py`
+The reservation price follows:
 
-A market maker resting a bid and ask against an otherwise empty book never
-gets filled. The flow generator is a separate process that fires a marketable
-order against the market maker's current best bid/ask on a random interval. 
-It has no fair-value model and no strategy as its only job is to guarantee 
-real fills happen, so inventory movement, quote skew, and PnL are all exercised 
-through the live venue.
+`reservation_price = fair_value - k × inventory`
 
-## End-to-end lifecycle
+where `k = 0.01`. Long inventory shifts quotes downward; short inventory shifts them upward.
 
-1. `venue_server` starts and begins its `poll()` loop; the market maker and
-   the flow generator connect to it independently.
-2. The market maker computes a reservation price from its private fair value
-   and zero starting inventory, and submits a bid and an ask.
-3. The flow generator fires a marketable order against the market maker's
-   resting quote; the venue's `OrderBook` matches it and emits `FILL` to
-   both sides.
-4. The market maker's fill handler updates `PositionState` — cash and
-   inventory move in the direction implied by the fill's side.
-5. On the next tick, fair value and the reservation price are recomputed
-   from the now-nonzero inventory — the quote skews away from flat — the
-   old pair is cancelled, a fresh bid/ask is submitted, and mark-to-market
-   PnL is recomputed and logged.
-6. Steps 3–5 repeat for the life of the run.
+### Flow generator
+
+`ops-layer/flow_generator/noise_trader.py`
+
+Generates marketable buy and sell orders against resting quotes at randomized intervals, producing counterparty activity through the exchange's TCP interface.
+
+## Trading lifecycle
+
+1. The market maker connects to the venue and submits bid/ask quotes.
+2. The flow generator submits a marketable order.
+3. The exchange matches the order and sends fills to the participants.
+4. The market maker updates inventory, cash, and PnL.
+5. The next quoting tick incorporates the updated inventory into its reservation price.
+6. The market maker cancels existing quotes and submits replacements.
 
 ## Quickstart
 
-Prerequisites: a C++20 compiler + CMake, Python 3.10+. No third-party Python
-packages are required to run the venue, market maker, flow generator, or
-either acceptance harness — all standard library (`asyncio`, `socket`,
-`json`). `pytest` is only needed for the fast unit-test suite.
+**Requirements:** C++20 compiler, CMake, Python 3.10+. `pytest` is required for Python tests.
 
-Build the engine + venue once:
+Build the exchange:
 
-```
-cd "engine/order-matching-engine"
-cmake -B build && cmake --build build
-cd ../..
+```bash
+cmake -S engine/order-matching-engine -B engine/order-matching-engine/build
+cmake --build engine/order-matching-engine/build
 ```
 
-Then, from the repo root, run the one-command Phase 2 demo — it starts the
-venue as a subprocess and runs the market maker and flow generator as two
-tasks in the Python harness process, lets
-them run for ~30 seconds, checks the full acceptance checklist against what
-actually happened, and tears everything down:
+Run the automated trading acceptance harness:
 
-```
+```bash
 python3 ops-layer/tools/trading_acceptance_test.py
 ```
 
-A `7/7 criteria passed` line at the end means the whole path — venue up,
-market maker quoting, flow generator crossing it, fills landing, inventory
-and cash moving, skew in the correct direction, PnL logged every tick, no
-crash — happened for real in that run. Pass `--duration 300` for the
-project's literal 5-minute soak instead of the default 30-second sample.
+Run a five-minute soak:
 
-To watch it live instead of via the harness, run each process in its own
-terminal from the repo root:
-
+```bash
+python3 ops-layer/tools/trading_acceptance_test.py --duration 300
 ```
+
+For independent processes, start the venue and run the following Python modules from `ops-layer` in separate terminals:
+
+```bash
+# Repository root
 ./engine/order-matching-engine/build/venue_server --port 9200
-python3 -m market_maker.main --port 9200          # from ops-layer/
-python3 -m flow_generator.noise_trader --port 9200 # from ops-layer/
+
+# From ops-layer/
+python3 -m market_maker.main --port 9200
+python3 -m flow_generator.noise_trader --port 9200
 ```
 
-## Representative output
+## Testing and verification
 
-Market maker, mid-run — fair value ticking, a fill landing, and the next
-quote skewing in response:
+The repository contains **131 automated tests** across C++ and Python.
 
-```
-[market_maker] tick fv=100.0039 inv=0.0 cash=0.00 pnl=0.00 bid=99.98 ask=100.02
-[market_maker] tick fv=99.9905 inv=0.0 cash=0.00 pnl=0.00 bid=99.97 ask=100.01
-[market_maker] FILL mm-40343-5 BUY 3@99.98 inv=3.0 cash=-299.94
-[market_maker] tick fv=100.0288 inv=3.0 cash=-299.94 pnl=0.15 bid=99.98 ask=100.02
-[market_maker] FILL mm-40343-12 SELL 3@100.01 inv=1.0 cash=-99.87
-```
+| Suite | Tests | Coverage |
+|---|---:|---|
+| C++ | 89 | Matching, order lifecycle, allocation, framing, protocol, venue behavior |
+| Python | 42 | Quoting, inventory/cash/PnL, TCP client behavior, acceptance checks, integration |
+| **Total** | **131** | |
 
-Flow generator crossing the resting quotes from the same run:
+Run the test suites:
 
-```
-[noise_trader] nt-40357-1 SELL 3@99.98
-[noise_trader] nt-40357-3 BUY 3@100.01
+```bash
+ctest --test-dir engine/order-matching-engine/build --output-on-failure
+
+cd ops-layer && python3 -m pytest
 ```
 
-Trading acceptance harness, tail of a run:
+The repository also includes live acceptance harnesses:
 
-```
-[PASS] 4. reservation price skewed the right direction
-        inventory=-5.0 fair_value=100.0137 reservation_price=100.0637
-[PASS] 6. PnL computed and logged every tick
-        30/30 tick lines contain pnl=
-7/7 criteria passed
+```bash
+python3 ops-layer/tools/venue_acceptance_test.py
+python3 ops-layer/tools/trading_acceptance_test.py
+python3 ops-layer/tools/trading_acceptance_test.py --duration 300
 ```
 
-## Verification
+The trading acceptance harness checks:
 
-For a reproducible test and acceptance verification record, run from the repository root:
+- Market-maker quoting activity and tick cadence.
+- Execution of trades through the exchange.
+- Inventory and cash changes following trading activity.
+- Reservation-price skew direction.
+- PnL logging on each quoting tick.
+- Completion of trading tasks without reported exceptions.
 
-```sh
+A verified five-minute run completed **300 quoting ticks**, with all seven acceptance checks passing.
+
+### Reproducible verification
+
+```bash
 python3 ops-layer/tools/capture_verification_evidence.py --duration 300
 ```
 
-This uses installed CMake/CTest/pytest and existing fetched dependencies,
-rebuilds with assertions enabled (unspecified build type, benchmarks off),
-and runs both test suites followed by the existing acceptance workload.
-It preserves full logs, test XML with separate pass/fail/skip/error counts,
-command exit codes, monotonic elapsed times, environment/build metadata,
-Git HEAD plus uncommitted source snapshots, and artifact hashes under the
-ignored `evidence/<timestamp>-verification/` directory. Each invocation creates a
-new directory. No dependencies are installed and no commits are created.
-Random seeds remain unspecified, so reproduction repeats the procedure,
-not the exact event sequence. The acceptance run uses two OS processes;
-the separate manual commands above use three. Workload timing covers the
-configured wait and excludes cancellation, observer checks and teardown.
-These results establish the existing acceptance predicates, not full state
-reconciliation, throughput, latency or receiver-error monitoring.
+The verification runner builds the C++ project, executes both test suites, runs the acceptance workload, and stores results in an ignored `evidence/` directory.
 
-**Fast tests** — 89/89 C++ unit tests and 42/42 Python unit tests, both
-under 10 seconds, for iterating on the code:
+Artifacts include test reports, execution logs, exit codes, elapsed times, environment and build metadata, source-state information, and artifact hashes.
 
-```
-cd engine/order-matching-engine/build && ctest --output-on-failure
-cd ops-layer && pytest
-```
-
-**Live acceptance** — two harnesses that start the real processes, not
-mocks, and check what actually happened:
-
-```
-python3 ops-layer/tools/venue_acceptance_test.py                        # venue only — 7/7 passing
-python3 ops-layer/tools/trading_acceptance_test.py                 # venue + market maker + flow generator, ~30s — 7/7 passing
-python3 ops-layer/tools/trading_acceptance_test.py --duration 300  # same, over a 5-minute soak — 7/7 passing
-```
-
-The trading harness checks that the market maker connected and quoted, the
-flow generator produced real fills, fills moved inventory and cash, the
-reservation price skewed in the correct direction, quotes refreshed at ~1s
-cadence, PnL was logged every tick, and neither process crashed. The
-300-second soak logs 300 ticks and carries inventory further from zero
-(28.0 units net in the run behind this README), with the skew sign holding
-correct for the full run.
+The acceptance checks validate specific trading behaviors. They do not establish exhaustive fill reconciliation, maximum throughput, latency percentiles, or automatic failure recovery.
 
 ## Engineering decisions
 
-**Private fair value.** The market maker doesn't derive fair value from the
-venue's own `MARKET_DATA`. With only the market maker and the flow generator
-trading, the book is mostly the market maker's own resting quotes — deriving
-fair value from it would be circular, so it runs an independent process
-(a Gaussian random walk) instead.
+**Custom TCP protocol.** Explicit message framing and protocol handling provide a language-independent boundary between C++ and Python.
 
-**A separate flow generator.** Nothing in the venue creates counterparty
-flow on its own. Without an independent participant crossing the market
-maker's quotes, inventory, PnL, and skew would only ever be exercised by
-synthetically mutating state in a test. The flow generator exists purely
-to make real fills happen.
+**Independent fair value.** The market maker uses a private price process rather than deriving fair value from its own resting quotes.
 
-**Inventory skew.** `reservation_price = fair_value - k × inventory`
-(k = 0.01). Long inventory (positive) pulls the reservation price — and
-therefore both the bid and the ask — down, making the market maker keener
-to sell and less keen to buy, biasing it back toward flat. Short inventory
-does the reverse.
+**Inventory-aware quoting.** Reservation-price adjustments bias quotes toward reducing accumulated inventory.
 
-**Cancel-and-requote, not conditional updates.** Every tick cancels both
-resting orders and submits a fresh pair unconditionally, rather than only
-requoting when the new quote differs meaningfully from the old one. Simpler
-to reason about and to test; the tradeoff is order churn a production
-market maker would care about optimizing away.
+**Cancel-and-requote.** Quotes are replaced every tick to keep strategy behavior straightforward and deterministic at the decision level, at the cost of additional order traffic.
 
-**Async architecture.** Incoming message dispatch and the periodic requote
-loop are two independently-scheduled coroutines sharing one event loop, not
-one polling or blocking on the other — a `FILL` can update state at any
-point between ticks instead of only being picked up at the next tick.
+**Asynchronous processing.** Fill handling and periodic quoting run as separately scheduled coroutines, allowing state updates between quoting ticks.
 
-**Explicit phase boundaries.** Reconnection handling, risk limits, an
-inbound liveness timeout (heartbeat today is server → client only), state
-reconciliation, fault injection, and escalation are scoped to later phases —
-deliberately, so there's real failure surface for the operations layer to
-detect and recover from, rather than a system already hardened against it.
+**Independent counterparty flow.** The flow generator exercises trading behavior through actual venue order submissions rather than synthetic state mutations.
 
 ## Repository structure
 
-```
+```text
 engine/order-matching-engine/
-├── include/, src/    reused matching core (OrderBook, OrderPool, PriceLevel) — untouched
-├── venue/            new protocol layer: wire framing, message encode/decode, Venue wrapper, poll()-based Server
-└── tests/            C++ unit tests, incl. venue_protocol_test (framing/protocol/venue behavior)
+├── include/          Matching-core interfaces
+├── src/              Matching-core implementation
+├── venue/            TCP server, framing, protocol, venue wrapper
+└── tests/            C++ tests
 
 ops-layer/
-├── venue_client/      Python asyncio client: framing, dispatch, shared protocol helpers
-├── market_maker/      fair_value.py, quoting.py, state.py, main.py — the quoting strategy and its bookkeeping
-├── flow_generator/    noise_trader.py — independent marketable order flow
-├── tools/             venue_acceptance_test.py and trading_acceptance_test.py — live end-to-end harnesses
-└── tests/             pytest unit/component suite
+├── venue_client/     Async TCP client and protocol helpers
+├── market_maker/     Fair value, quoting, state, execution loop
+├── flow_generator/   Counterparty order generation
+├── tools/            Acceptance and verification harnesses
+└── tests/            Python tests
 ```
