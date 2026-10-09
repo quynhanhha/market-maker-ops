@@ -9,8 +9,7 @@ live venue.
 
 The matching core is reused from an existing order book implementation;
 the wire protocol, the venue wrapper, the Python client, the
-market-making strategy, and the flow generator are new. It's also the seed
-of a larger trading-operations project — see [Next](#next).
+market-making strategy, and the flow generator are new.
 
 ## Architecture
 
